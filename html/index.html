@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visualizzatore Fotogrammetria 3D - Heavy Files</title>
+    <link rel="stylesheet" href="./VisualFot.css" />
+</head>
+<body>
+    <header>
+        <h1>🏛️ Visualizzatore Fotogrammetria 3D - Heavy Files Edition</h1>
+        <p class="subtitle">Ottimizzato per file enormi (2GB+) • Rotazione 360° • Controlli avanzati</p>
+    </header>
+    
+    <div class="container">
+        <div class="viewer-wrapper">
+            <div id="viewer-container">
+                <div id="status" class="status"></div>
+                <div id="loadingOverlay" class="loading-overlay">
+                    <div class="loading-content">
+                        <div class="loading-spinner"></div>
+                        <div class="loading-text" id="loadingText">Caricamento in corso...</div>
+                        <div class="loading-details" id="loadingDetails">Preparazione file</div>
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="progressFill">0%</div>
+                        </div>
+                        <div style="font-size: 0.8em; opacity: 0.7; margin-top: 10px;">
+                            File di grandi dimensioni richiedono più tempo
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="model-info" id="modelInfo">
+                <h3>📊 Info Modello</h3>
+                <div class="info-grid">
+                    <div class="info-item">
+                        <div class="info-label">Triangoli</div>
+                        <div class="info-value" id="modelTriangles">-</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Dimensioni</div>
+                        <div class="info-value" id="modelSize">-</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">File Size</div>
+                        <div class="info-value" id="fileSize">-</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Memoria</div>
+                        <div class="info-value" id="memoryUsage">-</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="controls">
+            <h2>⚙️ Controlli</h2>
+            
+            <div class="control-section">
+                <h3>📦 Carica Modello</h3>
+                
+                <div class="warning-box">
+                    <strong>⚠️ File Grandi:</strong><br>
+                    Il caricamento di file da 2GB+ può richiedere diversi minuti. Non chiudere la pagina durante il caricamento!
+                </div>
+                
+                <div class="file-input-wrapper">
+                    <input type="file" id="objFile" accept=".obj">
+                    <label for="objFile" class="file-input-label" id="objLabel">
+                        📁 OBJ File
+                    </label>
+                </div>
+                
+                <div class="file-input-wrapper">
+                    <input type="file" id="mtlFile" accept=".mtl">
+                    <label for="mtlFile" class="file-input-label" id="mtlLabel">
+                        📁 MTL File (opzionale)
+                    </label>
+                </div>
+            </div>
+            
+            <div class="control-section">
+                <h3>🎨 Carica Texture</h3>
+                
+                <div class="file-input-wrapper">
+                    <input type="file" id="textureFile" accept=".jpg,.jpeg,.png,.bmp,.tga,.tiff,.webp">
+                    <label for="textureFile" class="file-input-label" id="textureLabel">
+                        🖼️ Texture (Multi-formato)
+                    </label>
+                </div>
+            </div>
+            
+            <div class="control-section">
+                <h3>🎨 Regolazioni Visive</h3>
+                
+                <div class="slider-control">
+                    <div class="slider-label">
+                        <span>Luminosità</span>
+                        <span class="slider-value" id="brightnessValue">1.0</span>
+                    </div>
+                    <input type="range" id="brightnessSlider" min="0" max="3" step="0.1" value="1">
+                </div>
+                
+                <div class="slider-control">
+                    <div class="slider-label">
+                        <span>Contrasto</span>
+                        <span class="slider-value" id="contrastValue">1.0</span>
+                    </div>
+                    <input type="range" id="contrastSlider" min="0" max="3" step="0.1" value="1">
+                </div>
+                
+                <div class="slider-control">
+                    <div class="slider-label">
+                        <span>Saturazione</span>
+                        <span class="slider-value" id="saturationValue">1.0</span>
+                    </div>
+                    <input type="range" id="saturationSlider" min="0" max="2" step="0.1" value="1">
+                </div>
+                
+                <div class="slider-control">
+                    <div class="slider-label">
+                        <span>Esposizione</span>
+                        <span class="slider-value" id="exposureValue">1.0</span>
+                    </div>
+                    <input type="range" id="exposureSlider" min="0.1" max="3" step="0.1" value="1">
+                </div>
+                
+                <button onclick="resetVisuals()" class="secondary">🔄 Reset Regolazioni</button>
+            </div>
+            
+            <div class="control-section">
+                <h3>🎮 Visualizzazione</h3>
+                
+                <button onclick="resetCamera()">🎯 Reset Camera</button>
+                <button onclick="toggleRotation()">⏸ Pausa Rotazione</button>
+                <button onclick="toggleWireframe()">🔲 Wireframe</button>
+                <button onclick="takeScreenshot()">📸 Screenshot</button>
+                
+                <select id="bgSelect" onchange="changeBackground(this.value)">
+                    <option value="#2a2a2a" selected>Sfondo: Grigio Scuro</option>
+                    <option value="#1a1a1a">Sfondo: Nero</option>
+                    <option value="#000000">Sfondo: Nero Puro</option>
+                    <option value="#404040">Sfondo: Grigio Medio</option>
+                    <option value="#606060">Sfondo: Grigio Chiaro</option>
+                    <option value="#f0f0f0">Sfondo: Bianco Sporco</option>
+                    <option value="#ffffff">Sfondo: Bianco</option>
+                </select>
+            </div>
+            
+            <div class="info-box">
+                <strong>🖱️ Controlli:</strong><br>
+                • Click + Trascina: Ruota 360°<br>
+                • Scroll: Zoom infinito<br>
+                • Click destro: Pan (sposta)<br>
+                • Rotazione automatica lenta
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script scr="./VisualFotScript.js"></script>
+   
+</body>
+</html>
