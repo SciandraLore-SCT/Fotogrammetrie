@@ -1,3 +1,6 @@
+# Objective
+
+A project to enable the visualization of photogrammetry in environments such as caving and environments with low hardware levels and low energy consumption, as well as being a plug-in.
 
 # Photogrammetry
 
