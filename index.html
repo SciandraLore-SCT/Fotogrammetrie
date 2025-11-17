@@ -1,0 +1,1211 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visualizzatore Fotogrammetria 3D - Auto Decimation</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        header {
+            background: rgba(0,0,0,0.3);
+            backdrop-filter: blur(10px);
+            padding: 15px 20px;
+            color: white;
+        }
+        
+        h1 {
+            font-size: 1.7em;
+            margin-bottom: 3px;
+        }
+        
+        .subtitle {
+            opacity: 0.9;
+            font-size: 0.8em;
+        }
+        
+        .container {
+            flex: 1;
+            display: flex;
+            padding: 20px;
+            gap: 20px;
+            max-width: 1600px;
+            margin: 0 auto;
+            width: 100%;
+        }
+        
+        .viewer-wrapper {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        
+        #viewer-container {
+            background: #2a2a2a;
+            border-radius: 15px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+            flex: 1;
+            position: relative;
+            min-height: 500px;
+        }
+        
+        .loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.95);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+            flex-direction: column;
+            padding: 40px;
+        }
+        
+        .loading-overlay.show {
+            display: flex;
+        }
+        
+        .loading-content {
+            text-align: center;
+            color: white;
+            max-width: 550px;
+            width: 100%;
+        }
+        
+        .loading-spinner {
+            width: 60px;
+            height: 60px;
+            border: 4px solid rgba(255,255,255,0.2);
+            border-top-color: #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .loading-text {
+            font-size: 1.3em;
+            margin-bottom: 10px;
+            font-weight: 600;
+        }
+        
+        .loading-details {
+            font-size: 0.95em;
+            opacity: 0.9;
+            margin-bottom: 20px;
+            min-height: 24px;
+            line-height: 1.4;
+        }
+        
+        .progress-bar {
+            width: 100%;
+            height: 32px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 16px;
+            overflow: hidden;
+            margin-bottom: 12px;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            width: 0%;
+            transition: width 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: 600;
+            font-size: 0.95em;
+        }
+        
+        .status {
+            position: absolute;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-weight: 500;
+            z-index: 10;
+            display: none;
+            max-width: 80%;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        }
+        
+        .status.info {
+            background: rgba(33, 150, 243, 0.95);
+            color: white;
+        }
+        
+        .status.success {
+            background: rgba(76, 175, 80, 0.95);
+            color: white;
+        }
+        
+        .status.error {
+            background: rgba(244, 67, 54, 0.95);
+            color: white;
+        }
+        
+        .model-info {
+            background: white;
+            padding: 15px;
+            border-radius: 10px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.2);
+            display: none;
+        }
+        
+        .model-info h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 1.1em;
+        }
+        
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+        }
+        
+        .info-item {
+            text-align: center;
+        }
+        
+        .info-label {
+            font-size: 0.75em;
+            color: #666;
+            margin-bottom: 3px;
+        }
+        
+        .info-value {
+            font-size: 0.95em;
+            font-weight: 600;
+            color: #333;
+        }
+        
+        .controls {
+            background: white;
+            padding: 20px;
+            border-radius: 15px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            width: 350px;
+            max-height: calc(100vh - 180px);
+            overflow-y: auto;
+        }
+        
+        .controls h2 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 1.3em;
+        }
+        
+        .control-section {
+            margin-bottom: 20px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        
+        .control-section:last-child {
+            border-bottom: none;
+        }
+        
+        .control-section h3 {
+            color: #333;
+            font-size: 1em;
+            margin-bottom: 12px;
+        }
+        
+        .file-input-wrapper {
+            position: relative;
+            margin-bottom: 10px;
+        }
+        
+        .file-input-wrapper input[type="file"] {
+            display: none;
+        }
+        
+        .file-input-label {
+            display: block;
+            padding: 12px;
+            background: #f8f9ff;
+            border: 2px dashed #667eea;
+            border-radius: 8px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-size: 0.9em;
+        }
+        
+        .file-input-label:hover {
+            border-color: #764ba2;
+            background: #fff;
+        }
+        
+        .file-input-label.has-file {
+            border-style: solid;
+            background: #e8f5e9;
+            border-color: #4caf50;
+        }
+        
+        .quality-selector {
+            background: #f8f9ff;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            border: 1px solid #e0e0e0;
+        }
+        
+        .quality-selector label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 500;
+            font-size: 0.9em;
+        }
+        
+        .quality-selector select {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #e0e0e0;
+            border-radius: 6px;
+            font-size: 0.9em;
+        }
+        
+        .slider-control {
+            margin-bottom: 15px;
+        }
+        
+        .slider-label {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-size: 0.9em;
+            color: #333;
+        }
+        
+        .slider-value {
+            color: #667eea;
+            font-weight: 600;
+        }
+        
+        input[type="range"] {
+            width: 100%;
+            height: 6px;
+            border-radius: 3px;
+            background: #e0e0e0;
+            outline: none;
+            -webkit-appearance: none;
+        }
+        
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #667eea;
+            cursor: pointer;
+        }
+        
+        input[type="range"]::-moz-range-thumb {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #667eea;
+            cursor: pointer;
+            border: none;
+        }
+        
+        button {
+            width: 100%;
+            padding: 11px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.9em;
+            font-weight: 500;
+            transition: all 0.3s;
+            margin-bottom: 8px;
+        }
+        
+        button:hover:not(:disabled) {
+            background: #764ba2;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        button.secondary {
+            background: #e0e0e0;
+            color: #666;
+        }
+        
+        button.secondary:hover:not(:disabled) {
+            background: #d0d0d0;
+        }
+        
+        select {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.9em;
+            margin-bottom: 10px;
+        }
+        
+        .info-box {
+            background: #fff3cd;
+            padding: 12px;
+            border-radius: 8px;
+            border-left: 4px solid #ffc107;
+            font-size: 0.85em;
+            line-height: 1.6;
+            color: #555;
+        }
+        
+        .info-box strong {
+            color: #f57c00;
+        }
+        
+        .warning-box {
+            background: #e3f2fd;
+            padding: 12px;
+            border-radius: 8px;
+            border-left: 4px solid #2196f3;
+            font-size: 0.85em;
+            line-height: 1.6;
+            color: #555;
+            margin-bottom: 15px;
+        }
+        
+        .warning-box strong {
+            color: #1976d2;
+        }
+        
+        @media (max-width: 968px) {
+            .container {
+                flex-direction: column;
+            }
+            
+            .controls {
+                width: 100%;
+                max-height: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>🏛️ Visualizzatore Fotogrammetria 3D</h1>
+        <p class="subtitle">Auto-decimation per file giganti • Previene Out of Memory • Controlli avanzati</p>
+    </header>
+    
+    <div class="container">
+        <div class="viewer-wrapper">
+            <div id="viewer-container">
+                <div id="status" class="status"></div>
+                <div id="loadingOverlay" class="loading-overlay">
+                    <div class="loading-content">
+                        <div class="loading-spinner"></div>
+                        <div class="loading-text" id="loadingText">Caricamento...</div>
+                        <div class="loading-details" id="loadingDetails"></div>
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="progressFill">0%</div>
+                        </div>
+                        <div style="font-size: 0.85em; opacity: 0.8; margin-top: 12px;" id="loadingHint">
+                            Preparazione file
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="model-info" id="modelInfo">
+                <h3>📊 Info Modello</h3>
+                <div class="info-grid">
+                    <div class="info-item">
+                        <div class="info-label">Triangoli</div>
+                        <div class="info-value" id="modelTriangles">-</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Dimensioni</div>
+                        <div class="info-value" id="modelSize">-</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Decimato</div>
+                        <div class="info-value" id="decimationInfo">-</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="controls">
+            <h2>⚙️ Controlli</h2>
+            
+            <div class="control-section">
+                <h3>📦 Carica Modello</h3>
+                
+                <div class="warning-box">
+                    <strong>🧠 Sistema Anti-Crash:</strong><br>
+                    I file grandi vengono automaticamente decimati per evitare "Out of Memory". Scegli la qualità sotto.
+                </div>
+                
+                <div class="quality-selector">
+                    <label>🎯 Qualità Decimazione:</label>
+                    <select id="qualitySelect">
+                        <option value="ultra">Ultra (10M triangoli) - File <500MB</option>
+                        <option value="high">Alta (5M triangoli) - File <1GB</option>
+                        <option value="medium" selected>Media (2M triangoli) - File <2GB ✅</option>
+                        <option value="low">Bassa (1M triangoli) - File >2GB</option>
+                        <option value="preview">Anteprima (500K tri) - File >5GB</option>
+                    </select>
+                </div>
+                
+                <div class="file-input-wrapper">
+                    <input type="file" id="objFile" accept=".obj">
+                    <label for="objFile" class="file-input-label" id="objLabel">
+                        📁 Carica OBJ (qualsiasi dimensione)
+                    </label>
+                </div>
+            </div>
+            
+            <div class="control-section">
+                <h3>🎨 Carica Texture</h3>
+                
+                <div class="file-input-wrapper">
+                    <input type="file" id="textureFile" accept=".jpg,.jpeg,.png,.bmp,.webp">
+                    <label for="textureFile" class="file-input-label" id="textureLabel">
+                        🖼️ Texture (JPG/PNG/BMP/WEBP)
+                    </label>
+                </div>
+            </div>
+            
+            <div class="control-section">
+                <h3>🎨 Regolazioni Visive</h3>
+                
+                <div class="slider-control">
+                    <div class="slider-label">
+                        <span>💡 Luminosità</span>
+                        <span class="slider-value" id="brightnessValue">1.0</span>
+                    </div>
+                    <input type="range" id="brightnessSlider" min="0.2" max="3" step="0.1" value="1">
+                </div>
+                
+                <div class="slider-control">
+                    <div class="slider-label">
+                        <span>🎭 Contrasto</span>
+                        <span class="slider-value" id="contrastValue">1.0</span>
+                    </div>
+                    <input type="range" id="contrastSlider" min="0.5" max="2.5" step="0.1" value="1">
+                </div>
+                
+                <div class="slider-control">
+                    <div class="slider-label">
+                        <span>🌈 Saturazione</span>
+                        <span class="slider-value" id="saturationValue">1.0</span>
+                    </div>
+                    <input type="range" id="saturationSlider" min="0" max="2" step="0.1" value="1">
+                </div>
+                
+                <button onclick="resetVisuals()" class="secondary">🔄 Reset Regolazioni</button>
+            </div>
+            
+            <div class="control-section">
+                <h3>🎮 Visualizzazione</h3>
+                
+                <button onclick="resetCamera()">🎯 Reset Camera</button>
+                <button onclick="toggleRotation()" id="rotationBtn">⏸ Pausa Rotazione</button>
+                <button onclick="toggleWireframe()">🔲 Wireframe</button>
+                <button onclick="takeScreenshot()">📸 Screenshot</button>
+                
+                <select id="bgSelect" onchange="changeBackground(this.value)">
+                    <option value="#2a2a2a" selected>Sfondo: Grigio Scuro</option>
+                    <option value="#1a1a1a">Sfondo: Nero</option>
+                    <option value="#000000">Sfondo: Nero Puro</option>
+                    <option value="#404040">Sfondo: Grigio Medio</option>
+                    <option value="#f0f0f0">Sfondo: Grigio Chiaro</option>
+                    <option value="#ffffff">Sfondo: Bianco</option>
+                </select>
+            </div>
+            
+            <div class="info-box">
+                <strong>🖱️ Controlli:</strong><br>
+                • Click + Trascina: Ruota 360°<br>
+                • Scroll: Zoom infinito<br>
+                • Click destro: Pan<br>
+                • Rotazione automatica lenta
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    
+    <script>
+        let scene, camera, renderer, controls, currentModel;
+        let loadedTexture = null;
+        let autoRotate = true;
+        let isLoading = false;
+        
+        const visualSettings = {
+            brightness: 1.0,
+            contrast: 1.0,
+            saturation: 1.0
+        };
+        
+        const qualityLimits = {
+            ultra: 10000000,
+            high: 5000000,
+            medium: 2000000,
+            low: 1000000,
+            preview: 500000
+        };
+
+        // OrbitControls compatto
+        class OrbitControls {
+            constructor(cam, dom) {
+                this.camera = cam;
+                this.domElement = dom;
+                this.target = new THREE.Vector3();
+                this.minDistance = 0.5;
+                this.maxDistance = 1000;
+                this.autoRotate = true;
+                this.autoRotateSpeed = 0.3;
+                
+                const scope = this;
+                let state = 0;
+                const spherical = new THREE.Spherical();
+                const sphericalDelta = new THREE.Spherical();
+                let scale = 1;
+                const panOffset = new THREE.Vector3();
+                let rotateStart = new THREE.Vector2();
+                let rotateEnd = new THREE.Vector2();
+                let rotateDelta = new THREE.Vector2();
+                let panStart = new THREE.Vector2();
+                let panEnd = new THREE.Vector2();
+                let panDelta = new THREE.Vector2();
+                
+                function onMouseDown(e) {
+                    e.preventDefault();
+                    state = e.button === 0 ? 1 : (e.button === 2 ? 2 : 0);
+                    if (state === 1) rotateStart.set(e.clientX, e.clientY);
+                    if (state === 2) panStart.set(e.clientX, e.clientY);
+                    document.addEventListener('mousemove', onMouseMove);
+                    document.addEventListener('mouseup', onMouseUp);
+                }
+                
+                function onMouseMove(e) {
+                    e.preventDefault();
+                    if (state === 1) {
+                        rotateEnd.set(e.clientX, e.clientY);
+                        rotateDelta.subVectors(rotateEnd, rotateStart).multiplyScalar(0.5);
+                        sphericalDelta.theta -= 2 * Math.PI * rotateDelta.x / scope.domElement.clientHeight;
+                        sphericalDelta.phi -= 2 * Math.PI * rotateDelta.y / scope.domElement.clientHeight;
+                        rotateStart.copy(rotateEnd);
+                    } else if (state === 2) {
+                        panEnd.set(e.clientX, e.clientY);
+                        panDelta.subVectors(panEnd, panStart).multiplyScalar(0.5);
+                        const offset = new THREE.Vector3().copy(scope.camera.position).sub(scope.target);
+                        let dist = offset.length() * Math.tan((scope.camera.fov / 2) * Math.PI / 180.0);
+                        const v1 = new THREE.Vector3();
+                        v1.setFromMatrixColumn(scope.camera.matrix, 0);
+                        v1.multiplyScalar(-2 * panDelta.x * dist / scope.domElement.clientHeight);
+                        panOffset.add(v1);
+                        const v2 = new THREE.Vector3();
+                        v2.setFromMatrixColumn(scope.camera.matrix, 1);
+                        v2.multiplyScalar(2 * panDelta.y * dist / scope.domElement.clientHeight);
+                        panOffset.add(v2);
+                        panStart.copy(panEnd);
+                    }
+                    scope.update();
+                }
+                
+                function onMouseUp() {
+                    document.removeEventListener('mousemove', onMouseMove);
+                    document.removeEventListener('mouseup', onMouseUp);
+                    state = 0;
+                }
+                
+                function onWheel(e) {
+                    e.preventDefault();
+                    scale = e.deltaY < 0 ? scale / 0.95 : scale * 0.95;
+                    scope.update();
+                }
+                
+                this.domElement.addEventListener('mousedown', onMouseDown);
+                this.domElement.addEventListener('wheel', onWheel);
+                this.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
+                
+                this.update = function() {
+                    const offset = new THREE.Vector3();
+                    const quat = new THREE.Quaternion().setFromUnitVectors(cam.up, new THREE.Vector3(0, 1, 0));
+                    const quatInv = quat.clone().invert();
+                    
+                    offset.copy(scope.camera.position).sub(scope.target);
+                    offset.applyQuaternion(quat);
+                    spherical.setFromVector3(offset);
+                    
+                    if (scope.autoRotate && state === 0) {
+                        sphericalDelta.theta -= 2 * Math.PI / 60 / 60 * scope.autoRotateSpeed;
+                    }
+                    
+                    spherical.theta += sphericalDelta.theta;
+                    spherical.phi += sphericalDelta.phi;
+                    spherical.phi = Math.max(0, Math.min(Math.PI, spherical.phi));
+                    spherical.makeSafe();
+                    spherical.radius *= scale;
+                    spherical.radius = Math.max(scope.minDistance, Math.min(scope.maxDistance, spherical.radius));
+                    
+                    scope.target.add(panOffset);
+                    offset.setFromSpherical(spherical);
+                    offset.applyQuaternion(quatInv);
+                    scope.camera.position.copy(scope.target).add(offset);
+                    scope.camera.lookAt(scope.target);
+                    
+                    sphericalDelta.theta *= 0.92;
+                    sphericalDelta.phi *= 0.92;
+                    panOffset.multiplyScalar(0.92);
+                    scale = 1;
+                };
+            }
+        }
+
+        function init() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x2a2a2a);
+
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 10000);
+            camera.position.set(5, 5, 5);
+
+            const container = document.getElementById('viewer-container');
+            renderer = new THREE.WebGLRenderer({ 
+                antialias: true, 
+                preserveDrawingBuffer: true,
+                powerPreference: "high-performance"
+            });
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            container.appendChild(renderer.domElement);
+
+            controls = new OrbitControls(camera, renderer.domElement);
+
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+            scene.add(ambientLight);
+
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(10, 10, 10);
+            scene.add(directionalLight);
+
+            const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.5);
+            directionalLight2.position.set(-10, -10, -10);
+            scene.add(directionalLight2);
+
+            const gridHelper = new THREE.GridHelper(20, 20, 0x555555, 0x333333);
+            scene.add(gridHelper);
+
+            window.addEventListener('resize', () => {
+                camera.aspect = container.clientWidth / container.clientHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(container.clientWidth, container.clientHeight);
+            });
+
+            animate();
+            showStatus('✅ Pronto! Scegli la qualità e carica il modello', 'success');
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        function showStatus(msg, type = 'info') {
+            const status = document.getElementById('status');
+            status.textContent = msg;
+            status.className = 'status ' + type;
+            status.style.display = 'block';
+            
+            if (type === 'success' || type === 'info') {
+                setTimeout(() => {
+                    status.style.display = 'none';
+                }, 5000);
+            }
+        }
+
+        function showLoading(show) {
+            document.getElementById('loadingOverlay').classList.toggle('show', show);
+            isLoading = show;
+        }
+
+        function updateProgress(percent, text, hint) {
+            const fill = document.getElementById('progressFill');
+            fill.style.width = percent + '%';
+            fill.textContent = Math.round(percent) + '%';
+            if (text) document.getElementById('loadingText').textContent = text;
+            if (hint) document.getElementById('loadingDetails').textContent = hint;
+        }
+
+        // Caricamento con DECIMAZIONE automatica
+        async function loadOBJWithDecimation(file) {
+            if (isLoading) return;
+            
+            const quality = document.getElementById('qualitySelect').value;
+            const maxTriangles = qualityLimits[quality];
+            
+            showLoading(true);
+            updateProgress(0, 'Analisi file...', `Limite: ${(maxTriangles/1000000).toFixed(1)}M triangoli`);
+            
+            const fileSize = file.size;
+            const chunkSize = 20 * 1024 * 1024; // 20MB chunk
+            let offset = 0;
+            let textContent = '';
+            
+            const vertices = [];
+            const normals = [];
+            const uvs = [];
+            const faces = [];
+            
+            try {
+                // FASE 1: Lettura e parsing
+                while (offset < fileSize) {
+                    const chunk = file.slice(offset, offset + chunkSize);
+                    const text = await chunk.text();
+                    textContent += text;
+                    offset += chunkSize;
+                    
+                    const progress = Math.min((offset / fileSize) * 40, 40);
+                    updateProgress(progress, 'Lettura file...', `${formatBytes(offset)} / ${formatBytes(fileSize)}`);
+                    
+                    const lines = textContent.split('\n');
+                    const incompleteLine = lines.pop();
+                    
+                    for (const line of lines) {
+                        const t = line.trim();
+                        if (t.startsWith('v ')) {
+                            const p = t.split(/\s+/);
+                            uvs.push(parseFloat(p[1]), 1.0 - parseFloat(p[2]));
+                        } else if (t.startsWith('f ')) {
+                            const parts = t.substring(2).trim().split(/\s+/);
+                            parts.forEach(part => faces.push(part));
+                        }
+                    }
+                    
+                    textContent = incompleteLine || '';
+                    await new Promise(resolve => setTimeout(resolve, 0));
+                }
+                
+                const totalTriangles = faces.length / 3;
+                updateProgress(45, 'Analisi completata', `${(totalTriangles/1000000).toFixed(2)}M triangoli originali`);
+                await new Promise(resolve => setTimeout(resolve, 500));
+                
+                // FASE 2: Decimazione se necessario
+                let decimationRatio = 1.0;
+                if (totalTriangles > maxTriangles) {
+                    decimationRatio = maxTriangles / totalTriangles;
+                    updateProgress(50, '🔧 Decimazione automatica attiva...', 
+                        `Riduzione a ${(decimationRatio * 100).toFixed(1)}% per evitare crash`);
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
+                
+                // FASE 3: Costruzione mesh con decimazione
+                updateProgress(55, 'Costruzione mesh...', 
+                    decimationRatio < 1 ? `Usando ${(decimationRatio*100).toFixed(0)}% dei triangoli` : 'Mesh completa');
+                
+                const geometry = new THREE.BufferGeometry();
+                const positions = [];
+                const normalsArray = [];
+                const uvsArray = [];
+                
+                let processedTris = 0;
+                let addedTris = 0;
+                
+                for (let i = 0; i < faces.length; i += 3) {
+                    processedTris++;
+                    
+                    // DECIMAZIONE: Salta triangoli random
+                    if (decimationRatio < 1.0 && Math.random() > decimationRatio) {
+                        continue;
+                    }
+                    
+                    addedTris++;
+                    
+                    if (processedTris % 50000 === 0) {
+                        const prog = 55 + (processedTris / (faces.length / 3)) * 35;
+                        updateProgress(prog, 'Costruzione mesh...', 
+                            `${(addedTris/1000).toFixed(0)}K / ${(addedTris/1000000).toFixed(2)}M triangoli`);
+                        await new Promise(resolve => setTimeout(resolve, 0));
+                    }
+                    
+                    for (let j = 0; j < 3; j++) {
+                        const indices = faces[i + j].split('/');
+                        const vIdx = (parseInt(indices[0]) - 1) * 3;
+                        if (vIdx >= 0) positions.push(vertices[vIdx], vertices[vIdx + 1], vertices[vIdx + 2]);
+                        
+                        if (indices[1] && indices[1] !== '') {
+                            const uvIdx = (parseInt(indices[1]) - 1) * 2;
+                            if (uvIdx >= 0) uvsArray.push(uvs[uvIdx], uvs[uvIdx + 1]);
+                        }
+                        
+                        if (indices[2] && indices[2] !== '') {
+                            const nIdx = (parseInt(indices[2]) - 1) * 3;
+                            if (nIdx >= 0) normalsArray.push(normals[nIdx], normals[nIdx + 1], normals[nIdx + 2]);
+                        }
+                    }
+                }
+                
+                updateProgress(90, 'Finalizzazione...', 'Applicazione attributi geometria');
+                
+                geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+                if (normalsArray.length > 0) {
+                    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normalsArray, 3));
+                } else {
+                    geometry.computeVertexNormals();
+                }
+                if (uvsArray.length > 0) {
+                    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvsArray, 2));
+                }
+                
+                const material = new THREE.MeshStandardMaterial({
+                    color: 0xcccccc,
+                    side: THREE.DoubleSide,
+                    roughness: 0.7,
+                    metalness: 0.1
+                });
+                
+                if (currentModel) {
+                    scene.remove(currentModel);
+                    currentModel.traverse((c) => {
+                        if (c.geometry) c.geometry.dispose();
+                        if (c.material) c.material.dispose();
+                    });
+                }
+                
+                const mesh = new THREE.Mesh(geometry, material);
+                currentModel = new THREE.Group();
+                currentModel.add(mesh);
+                scene.add(currentModel);
+                
+                updateProgress(95, 'Centraggio...', '');
+                await new Promise(resolve => setTimeout(resolve, 100));
+                
+                // Centra modello
+                const box = new THREE.Box3().setFromObject(currentModel);
+                const center = box.getCenter(new THREE.Vector3());
+                const size = box.getSize(new THREE.Vector3());
+                currentModel.position.sub(center);
+                
+                const maxDim = Math.max(size.x, size.y, size.z);
+                const dist = maxDim / (2 * Math.tan(camera.fov * Math.PI / 360)) * 1.5;
+                camera.position.set(dist, dist * 0.7, dist);
+                camera.lookAt(0, 0, 0);
+                controls.target.set(0, 0, 0);
+                
+                // Applica texture
+                if (loadedTexture) {
+                    applyTextureToModel(currentModel, loadedTexture);
+                }
+                
+                // Info
+                document.getElementById('modelTriangles').textContent = addedTris.toLocaleString();
+                document.getElementById('modelSize').textContent = 
+                    `${size.x.toFixed(1)} × ${size.y.toFixed(1)} × ${size.z.toFixed(1)}`;
+                document.getElementById('decimationInfo').textContent = 
+                    decimationRatio < 1 ? `${(decimationRatio*100).toFixed(0)}%` : 'No';
+                document.getElementById('modelInfo').style.display = 'block';
+                
+                updateProgress(100, '✅ Completato!', '');
+                
+                setTimeout(() => {
+                    showLoading(false);
+                    if (decimationRatio < 1) {
+                        showStatus(`✅ Modello caricato con decimazione ${(decimationRatio*100).toFixed(0)}% (${addedTris.toLocaleString()} triangoli)`, 'success');
+                    } else {
+                        showStatus(`✅ Modello caricato completamente (${addedTris.toLocaleString()} triangoli)`, 'success');
+                    }
+                }, 500);
+                
+            } catch (error) {
+                console.error('Errore:', error);
+                showLoading(false);
+                showStatus('❌ Errore: ' + error.message, 'error');
+            }
+        }
+
+        function loadAndApplyTexture(file) {
+            const loader = new THREE.TextureLoader();
+            const url = URL.createObjectURL(file);
+            
+            showStatus('⏳ Caricamento texture...', 'info');
+            
+            loader.load(url, (texture) => {
+                texture.encoding = THREE.sRGBEncoding;
+                texture.wrapS = THREE.RepeatWrapping;
+                texture.wrapT = THREE.RepeatWrapping;
+                texture.minFilter = THREE.LinearMipmapLinearFilter;
+                texture.magFilter = THREE.LinearFilter;
+                texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+                texture.flipY = false;
+                
+                loadedTexture = texture;
+                
+                if (currentModel) {
+                    applyTextureToModel(currentModel, texture);
+                    showStatus('✅ Texture applicata!', 'success');
+                } else {
+                    showStatus('✅ Texture caricata. Carica ora il modello OBJ.', 'success');
+                }
+                
+                URL.revokeObjectURL(url);
+            }, null, (error) => {
+                console.error('Errore texture:', error);
+                showStatus('❌ Errore caricamento texture', 'error');
+            });
+        }
+
+        function applyTextureToModel(model, texture) {
+            model.traverse((child) => {
+                if (child.isMesh && child.geometry.getAttribute('uv')) {
+                    if (Array.isArray(child.material)) {
+                        child.material.forEach(mat => {
+                            mat.map = texture;
+                            mat.needsUpdate = true;
+                        });
+                    } else {
+                        child.material.map = texture;
+                        child.material.needsUpdate = true;
+                    }
+                }
+            });
+            applyVisualSettings();
+        }
+
+        function applyVisualSettings() {
+            if (!currentModel) return;
+            
+            const b = visualSettings.brightness;
+            const c = visualSettings.contrast;
+            const s = visualSettings.saturation;
+            
+            currentModel.traverse((child) => {
+                if (child.isMesh && child.material) {
+                    const mats = Array.isArray(child.material) ? child.material : [child.material];
+                    mats.forEach(mat => {
+                        if (!mat.userData.origColor) {
+                            mat.userData.origColor = mat.color.clone();
+                        }
+                        
+                        const base = mat.userData.origColor;
+                        let r = base.r * b;
+                        let g = base.g * b;
+                        let bl = base.b * b;
+                        
+                        const factor = (259 * (c * 255 + 255)) / (255 * (259 - c * 255));
+                        r = factor * (r - 0.5) + 0.5;
+                        g = factor * (g - 0.5) + 0.5;
+                        bl = factor * (bl - 0.5) + 0.5;
+                        
+                        const gray = 0.299 * r + 0.587 * g + 0.114 * bl;
+                        r = gray + s * (r - gray);
+                        g = gray + s * (g - gray);
+                        bl = gray + s * (bl - gray);
+                        
+                        mat.color.setRGB(
+                            Math.max(0, Math.min(1, r)),
+                            Math.max(0, Math.min(1, g)),
+                            Math.max(0, Math.min(1, bl))
+                        );
+                        mat.needsUpdate = true;
+                    });
+                }
+            });
+        }
+
+        window.resetCamera = function() {
+            if (currentModel) {
+                const box = new THREE.Box3().setFromObject(currentModel);
+                const size = box.getSize(new THREE.Vector3());
+                const maxDim = Math.max(size.x, size.y, size.z);
+                const dist = maxDim / (2 * Math.tan(camera.fov * Math.PI / 360)) * 1.5;
+                camera.position.set(dist, dist * 0.7, dist);
+                camera.lookAt(0, 0, 0);
+                controls.target.set(0, 0, 0);
+            }
+        };
+
+        window.toggleRotation = function() {
+            autoRotate = !autoRotate;
+            controls.autoRotate = autoRotate;
+            document.getElementById('rotationBtn').textContent = 
+                autoRotate ? '⏸ Pausa Rotazione' : '▶ Riprendi Rotazione';
+        };
+
+        window.toggleWireframe = function() {
+            if (!currentModel) return;
+            currentModel.traverse((child) => {
+                if (child.isMesh && child.material) {
+                    const mats = Array.isArray(child.material) ? child.material : [child.material];
+                    mats.forEach(mat => {
+                        mat.wireframe = !mat.wireframe;
+                    });
+                }
+            });
+        };
+
+        window.changeBackground = function(color) {
+            scene.background = new THREE.Color(color);
+        };
+
+        window.takeScreenshot = function() {
+            renderer.render(scene, camera);
+            const link = document.createElement('a');
+            link.download = 'screenshot_' + Date.now() + '.png';
+            link.href = renderer.domElement.toDataURL('image/png');
+            link.click();
+            showStatus('✅ Screenshot salvato!', 'success');
+        };
+
+        window.resetVisuals = function() {
+            visualSettings.brightness = 1.0;
+            visualSettings.contrast = 1.0;
+            visualSettings.saturation = 1.0;
+            
+            document.getElementById('brightnessSlider').value = 1.0;
+            document.getElementById('contrastSlider').value = 1.0;
+            document.getElementById('saturationSlider').value = 1.0;
+            
+            document.getElementById('brightnessValue').textContent = '1.0';
+            document.getElementById('contrastValue').textContent = '1.0';
+            document.getElementById('saturationValue').textContent = '1.0';
+            
+            applyVisualSettings();
+            showStatus('✅ Regolazioni reset', 'success');
+        };
+
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        // Event listeners
+        document.addEventListener('DOMContentLoaded', function() {
+            init();
+            
+            document.getElementById('objFile').addEventListener('change', function(e) {
+                const file = e.target.files[0];
+                if (file) {
+                    loadOBJWithDecimation(file);
+                    document.getElementById('objLabel').textContent = '✅ ' + file.name;
+                    document.getElementById('objLabel').classList.add('has-file');
+                }
+            });
+
+            document.getElementById('textureFile').addEventListener('change', function(e) {
+                const file = e.target.files[0];
+                if (file) {
+                    loadAndApplyTexture(file);
+                    document.getElementById('textureLabel').textContent = '✅ ' + file.name;
+                    document.getElementById('textureLabel').classList.add('has-file');
+                }
+            });
+
+            // Sliders
+            document.getElementById('brightnessSlider').addEventListener('input', function(e) {
+                visualSettings.brightness = parseFloat(e.target.value);
+                document.getElementById('brightnessValue').textContent = e.target.value;
+                applyVisualSettings();
+            });
+
+            document.getElementById('contrastSlider').addEventListener('input', function(e) {
+                visualSettings.contrast = parseFloat(e.target.value);
+                document.getElementById('contrastValue').textContent = e.target.value;
+                applyVisualSettings();
+            });
+
+            document.getElementById('saturationSlider').addEventListener('input', function(e) {
+                visualSettings.saturation = parseFloat(e.target.value);
+                document.getElementById('saturationValue').textContent = e.target.value;
+                applyVisualSettings();
+            });
+
+            // Drag & Drop
+            const container = document.getElementById('viewer-container');
+            
+            container.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                if (!isLoading) container.style.opacity = '0.7';
+            });
+
+            container.addEventListener('dragleave', () => {
+                container.style.opacity = '1';
+            });
+
+            container.addEventListener('drop', (e) => {
+                e.preventDefault();
+                container.style.opacity = '1';
+                
+                if (isLoading) {
+                    showStatus('⚠️ Attendi il completamento del caricamento corrente', 'info');
+                    return;
+                }
+                
+                const files = Array.from(e.dataTransfer.files);
+                const objFile = files.find(f => f.name.toLowerCase().endsWith('.obj'));
+                const textureFile = files.find(f => {
+                    const name = f.name.toLowerCase();
+                    return name.endsWith('.jpg') || name.endsWith('.jpeg') || 
+                           name.endsWith('.png') || name.endsWith('.bmp') ||
+                           name.endsWith('.webp');
+                });
+                
+                if (objFile) {
+                    loadOBJWithDecimation(objFile);
+                    document.getElementById('objLabel').textContent = '✅ ' + objFile.name;
+                    document.getElementById('objLabel').classList.add('has-file');
+                }
+                
+                if (textureFile) {
+                    setTimeout(() => {
+                        loadAndApplyTexture(textureFile);
+                        document.getElementById('textureLabel').textContent = '✅ ' + textureFile.name;
+                        document.getElementById('textureLabel').classList.add('has-file');
+                    }, objFile ? 500 : 0);
+                }
+            });
+        });
+    </script>
+</body>
+</html>);
+                            vertices.push(parseFloat(p[1]), parseFloat(p[2]), parseFloat(p[3]));
+                        } else if (t.startsWith('vn ')) {
+                            const p = t.split(/\s+/);
+                            normals.push(parseFloat(p[1]), parseFloat(p[2]), parseFloat(p[3]));
+                        } else if (t.startsWith('vt ')) {
+                            const p = t.split(/\s+/
