@@ -2,17 +2,20 @@
 OBJ 3D Viewer with Multi-Format Texture Support
 Supports: PNG, JPEG, JPG, WEBP, BMP, TGA
 Handles large OBJ files (2GB+)
+Fixed for pyglet 2.x OpenGL compatibility
 """
 
 import sys
 import os
 from pathlib import Path
 
+# Import pyglet and OpenGL
 try:
     import pyglet
-    from pyglet.gl import *
     from pyglet.window import key, mouse
     from pyglet import image
+    import pyglet.gl as pgl
+    from pyglet.gl import gl
 except ImportError:
     print("ERROR: pyglet not installed!")
     print("Install with: pip install pyglet")
@@ -32,11 +35,13 @@ except ImportError:
 class OBJViewer:
     def __init__(self, obj_path, texture_path=None):
         # Create window
+        config = pyglet.gl.Config(double_buffer=True, depth_size=24)
         self.window = pyglet.window.Window(
             width=1400,
             height=900,
             caption='OBJ Viewer - Loading...',
-            resizable=True
+            resizable=True,
+            config=config
         )
         
         self.obj_path = obj_path
@@ -53,6 +58,7 @@ class OBJViewer:
         self.vertices = None
         self.normals = None
         self.uvs = None
+        self.colors = None
         self.vertex_count = 0
         
         # Texture
@@ -63,6 +69,9 @@ class OBJViewer:
         self.loaded = False
         self.error_msg = None
         self.loading_stage = "Initializing..."
+        
+        # Rendering options
+        self.show_wireframe = False
         
         # Stats
         self.file_size_mb = 0
@@ -83,39 +92,39 @@ class OBJViewer:
     
     def setup_gl(self):
         """Initialize OpenGL settings"""
-        glEnable(GL_DEPTH_TEST)
-        glDepthFunc(GL_LEQUAL)
-        glEnable(GL_CULL_FACE)
-        glCullFace(GL_BACK)
-        glFrontFace(GL_CCW)
+        gl.glEnable(gl.GL_DEPTH_TEST)
+        gl.glDepthFunc(gl.GL_LEQUAL)
+        gl.glEnable(gl.GL_CULL_FACE)
+        gl.glCullFace(gl.GL_BACK)
+        gl.glFrontFace(gl.GL_CCW)
         
         # Lighting
-        glEnable(GL_LIGHTING)
-        glEnable(GL_LIGHT0)
-        glEnable(GL_LIGHT1)
+        gl.glEnable(gl.GL_LIGHTING)
+        gl.glEnable(gl.GL_LIGHT0)
+        gl.glEnable(gl.GL_LIGHT1)
         
         # Main light
-        glLightfv(GL_LIGHT0, GL_POSITION, (GLfloat * 4)(10, 10, 10, 1))
-        glLightfv(GL_LIGHT0, GL_AMBIENT, (GLfloat * 4)(0.3, 0.3, 0.3, 1))
-        glLightfv(GL_LIGHT0, GL_DIFFUSE, (GLfloat * 4)(0.8, 0.8, 0.8, 1))
-        glLightfv(GL_LIGHT0, GL_SPECULAR, (GLfloat * 4)(0.5, 0.5, 0.5, 1))
+        gl.glLightfv(gl.GL_LIGHT0, gl.GL_POSITION, (gl.GLfloat * 4)(10, 10, 10, 1))
+        gl.glLightfv(gl.GL_LIGHT0, gl.GL_AMBIENT, (gl.GLfloat * 4)(0.3, 0.3, 0.3, 1))
+        gl.glLightfv(gl.GL_LIGHT0, gl.GL_DIFFUSE, (gl.GLfloat * 4)(0.8, 0.8, 0.8, 1))
+        gl.glLightfv(gl.GL_LIGHT0, gl.GL_SPECULAR, (gl.GLfloat * 4)(0.5, 0.5, 0.5, 1))
         
         # Fill light
-        glLightfv(GL_LIGHT1, GL_POSITION, (GLfloat * 4)(-10, 5, -10, 1))
-        glLightfv(GL_LIGHT1, GL_DIFFUSE, (GLfloat * 4)(0.4, 0.4, 0.4, 1))
+        gl.glLightfv(gl.GL_LIGHT1, gl.GL_POSITION, (gl.GLfloat * 4)(-10, 5, -10, 1))
+        gl.glLightfv(gl.GL_LIGHT1, gl.GL_DIFFUSE, (gl.GLfloat * 4)(0.4, 0.4, 0.4, 1))
         
-        glEnable(GL_COLOR_MATERIAL)
-        glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE)
+        gl.glEnable(gl.GL_COLOR_MATERIAL)
+        gl.glColorMaterial(gl.GL_FRONT_AND_BACK, gl.GL_AMBIENT_AND_DIFFUSE)
         
         # Material properties
-        glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, (GLfloat * 4)(0.3, 0.3, 0.3, 1))
-        glMaterialf(GL_FRONT_AND_BACK, GL_SHININESS, 20)
+        gl.glMaterialfv(gl.GL_FRONT_AND_BACK, gl.GL_SPECULAR, (gl.GLfloat * 4)(0.3, 0.3, 0.3, 1))
+        gl.glMaterialf(gl.GL_FRONT_AND_BACK, gl.GL_SHININESS, 20)
         
-        glClearColor(0.1, 0.12, 0.15, 1)
+        gl.glClearColor(0.1, 0.12, 0.15, 1)
         
         # Smooth shading
-        glShadeModel(GL_SMOOTH)
-        glHint(GL_PERSPECTIVE_CORRECTION_HINT, GL_NICEST)
+        gl.glShadeModel(gl.GL_SMOOTH)
+        gl.glHint(gl.GL_PERSPECTIVE_CORRECTION_HINT, gl.GL_NICEST)
     
     def load_texture(self, path):
         """Load texture from various formats"""
@@ -126,18 +135,18 @@ class OBJViewer:
             ext = Path(path).suffix.lower()
             print(f"\nLoading texture: {Path(path).name} ({ext})")
             
-            # Load image with PIL (via pyglet)
+            # Load image
             img = image.load(path)
             
             # Get texture
             self.texture = img.get_texture()
             
             # Enable texture mapping
-            glEnable(GL_TEXTURE_2D)
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR)
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT)
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT)
+            gl.glEnable(gl.GL_TEXTURE_2D)
+            gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MIN_FILTER, gl.GL_LINEAR_MIPMAP_LINEAR)
+            gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_MAG_FILTER, gl.GL_LINEAR)
+            gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_S, gl.GL_REPEAT)
+            gl.glTexParameteri(gl.GL_TEXTURE_2D, gl.GL_TEXTURE_WRAP_T, gl.GL_REPEAT)
             
             print(f"✓ Texture loaded: {img.width}x{img.height}px")
             self.has_texture = True
@@ -177,7 +186,7 @@ class OBJViewer:
             mesh = trimesh.load(
                 self.obj_path,
                 force='mesh',
-                process=False,  # Don't auto-process for speed
+                process=False,
                 maintain_order=True
             )
             
@@ -231,6 +240,14 @@ class OBJViewer:
                 print("⚠ No UV mapping in OBJ")
                 self.uvs = None
             
+            # Vertex colors as fallback
+            if hasattr(mesh.visual, 'vertex_colors') and mesh.visual.vertex_colors is not None:
+                cols = mesh.visual.vertex_colors[:, :3].astype(np.float32) / 255.0
+                self.colors = cols[mesh.faces].flatten()
+            else:
+                # Default gray color
+                self.colors = np.ones(self.vertex_count * 3, dtype=np.float32) * 0.75
+            
             self.loaded = True
             self.loading_stage = "Ready!"
             
@@ -274,10 +291,6 @@ class OBJViewer:
             f"{obj_name}_diffuse.*",
             "texture.*",
             "diffuse.*",
-            "*.png",
-            "*.jpg",
-            "*.jpeg",
-            "*.webp"
         ]
         
         # Supported formats
@@ -306,17 +319,17 @@ class OBJViewer:
             return
         
         # Setup 3D projection
-        glMatrixMode(GL_PROJECTION)
-        glLoadIdentity()
+        gl.glMatrixMode(gl.GL_PROJECTION)
+        gl.glLoadIdentity()
         aspect = self.window.width / self.window.height
-        gluPerspective(45, aspect, 0.1, 100)
+        gl.gluPerspective(45, aspect, 0.1, 100)
         
         # Setup camera
-        glMatrixMode(GL_MODELVIEW)
-        glLoadIdentity()
-        glTranslatef(self.pan_x, self.pan_y, -self.zoom)
-        glRotatef(self.rot_x, 1, 0, 0)
-        glRotatef(self.rot_y, 0, 1, 0)
+        gl.glMatrixMode(gl.GL_MODELVIEW)
+        gl.glLoadIdentity()
+        gl.glTranslatef(self.pan_x, self.pan_y, -self.zoom)
+        gl.glRotatef(self.rot_x, 1, 0, 0)
+        gl.glRotatef(self.rot_y, 0, 1, 0)
         
         # Draw model
         self.draw_model()
@@ -326,44 +339,51 @@ class OBJViewer:
     
     def draw_model(self):
         """Render the 3D model"""
-        # Bind texture if available
-        if self.has_texture and self.texture:
-            glEnable(GL_TEXTURE_2D)
-            glBindTexture(GL_TEXTURE_2D, self.texture.id)
+        # Wireframe mode
+        if self.show_wireframe:
+            gl.glPolygonMode(gl.GL_FRONT_AND_BACK, gl.GL_LINE)
         else:
-            glDisable(GL_TEXTURE_2D)
-            glColor3f(0.7, 0.7, 0.7)
+            gl.glPolygonMode(gl.GL_FRONT_AND_BACK, gl.GL_FILL)
+        
+        # Bind texture if available
+        if self.has_texture and self.texture and self.uvs is not None:
+            gl.glEnable(gl.GL_TEXTURE_2D)
+            gl.glBindTexture(gl.GL_TEXTURE_2D, self.texture.id)
+        else:
+            gl.glDisable(gl.GL_TEXTURE_2D)
         
         # Enable vertex arrays
-        glEnableClientState(GL_VERTEX_ARRAY)
-        glEnableClientState(GL_NORMAL_ARRAY)
+        gl.glEnableClientState(gl.GL_VERTEX_ARRAY)
+        gl.glEnableClientState(gl.GL_NORMAL_ARRAY)
+        gl.glEnableClientState(gl.GL_COLOR_ARRAY)
         
-        glVertexPointer(3, GL_FLOAT, 0, self.vertices.ctypes.data)
-        glNormalPointer(GL_FLOAT, 0, self.normals.ctypes.data)
+        gl.glVertexPointer(3, gl.GL_FLOAT, 0, self.vertices.ctypes.data)
+        gl.glNormalPointer(gl.GL_FLOAT, 0, self.normals.ctypes.data)
+        gl.glColorPointer(3, gl.GL_FLOAT, 0, self.colors.ctypes.data)
         
         # Enable UV if available
         if self.uvs is not None and self.has_texture:
-            glEnableClientState(GL_TEXTURE_COORD_ARRAY)
-            glTexCoordPointer(2, GL_FLOAT, 0, self.uvs.ctypes.data)
+            gl.glEnableClientState(gl.GL_TEXTURE_COORD_ARRAY)
+            gl.glTexCoordPointer(2, gl.GL_FLOAT, 0, self.uvs.ctypes.data)
         
         # Draw
-        glDrawArrays(GL_TRIANGLES, 0, self.vertex_count)
+        gl.glDrawArrays(gl.GL_TRIANGLES, 0, self.vertex_count)
         
         # Cleanup
-        glDisableClientState(GL_VERTEX_ARRAY)
-        glDisableClientState(GL_NORMAL_ARRAY)
+        gl.glDisableClientState(gl.GL_VERTEX_ARRAY)
+        gl.glDisableClientState(gl.GL_NORMAL_ARRAY)
+        gl.glDisableClientState(gl.GL_COLOR_ARRAY)
         if self.uvs is not None:
-            glDisableClientState(GL_TEXTURE_COORD_ARRAY)
+            gl.glDisableClientState(gl.GL_TEXTURE_COORD_ARRAY)
     
     def draw_loading(self):
         """Loading screen"""
-        glMatrixMode(GL_PROJECTION)
-        glLoadIdentity()
-        glOrtho(0, self.window.width, 0, self.window.height, -1, 1)
-        glMatrixMode(GL_MODELVIEW)
-        glLoadIdentity()
+        gl.glMatrixMode(gl.GL_PROJECTION)
+        gl.glLoadIdentity()
+        gl.glOrtho(0, self.window.width, 0, self.window.height, -1, 1)
+        gl.glMatrixMode(gl.GL_MODELVIEW)
+        gl.glLoadIdentity()
         
-        # Loading text
         title = pyglet.text.Label(
             'Loading OBJ Model',
             font_size=20,
@@ -375,7 +395,6 @@ class OBJViewer:
         )
         title.draw()
         
-        # Stage
         stage = pyglet.text.Label(
             self.loading_stage,
             font_size=14,
@@ -387,7 +406,6 @@ class OBJViewer:
         )
         stage.draw()
         
-        # Info
         if self.file_size_mb > 0:
             info = pyglet.text.Label(
                 f'File size: {self.file_size_mb:.1f} MB - Please wait...',
@@ -402,11 +420,11 @@ class OBJViewer:
     
     def draw_error(self):
         """Error screen"""
-        glMatrixMode(GL_PROJECTION)
-        glLoadIdentity()
-        glOrtho(0, self.window.width, 0, self.window.height, -1, 1)
-        glMatrixMode(GL_MODELVIEW)
-        glLoadIdentity()
+        gl.glMatrixMode(gl.GL_PROJECTION)
+        gl.glLoadIdentity()
+        gl.glOrtho(0, self.window.width, 0, self.window.height, -1, 1)
+        gl.glMatrixMode(gl.GL_MODELVIEW)
+        gl.glLoadIdentity()
         
         label = pyglet.text.Label(
             f'ERROR LOADING MODEL:\n\n{self.error_msg}',
@@ -423,18 +441,18 @@ class OBJViewer:
     
     def draw_ui(self):
         """Draw UI overlay"""
-        glMatrixMode(GL_PROJECTION)
-        glLoadIdentity()
-        glOrtho(0, self.window.width, 0, self.window.height, -1, 1)
-        glMatrixMode(GL_MODELVIEW)
-        glLoadIdentity()
+        gl.glMatrixMode(gl.GL_PROJECTION)
+        gl.glLoadIdentity()
+        gl.glOrtho(0, self.window.width, 0, self.window.height, -1, 1)
+        gl.glMatrixMode(gl.GL_MODELVIEW)
+        gl.glLoadIdentity()
         
-        # Stats
         stats = (
             f'Vertices: {self.vertex_count:,} | '
             f'Faces: {self.face_count:,} | '
             f'Zoom: {self.zoom:.1f}x | '
-            f'Texture: {"ON" if self.has_texture else "OFF"}'
+            f'Texture: {"ON" if self.has_texture else "OFF"} | '
+            f'Wireframe: {"ON" if self.show_wireframe else "OFF"}'
         )
         
         label_stats = pyglet.text.Label(
@@ -446,7 +464,6 @@ class OBJViewer:
         )
         label_stats.draw()
         
-        # Controls
         controls = 'LMB: Rotate | RMB: Pan | Scroll: Zoom | R: Reset | T: Texture | W: Wireframe'
         label_controls = pyglet.text.Label(
             controls,
@@ -477,7 +494,6 @@ class OBJViewer:
             self.window.close()
         
         elif symbol == key.R:
-            # Reset view
             self.rot_x = 20
             self.rot_y = 30
             self.zoom = 5.0
@@ -486,22 +502,19 @@ class OBJViewer:
             print("View reset")
         
         elif symbol == key.F:
-            # Fullscreen toggle
             self.window.set_fullscreen(not self.window.fullscreen)
         
         elif symbol == key.T and self.texture:
-            # Toggle texture
             self.has_texture = not self.has_texture
             print(f"Texture: {'ON' if self.has_texture else 'OFF'}")
         
         elif symbol == key.W:
-            # Toggle wireframe
-            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE if glGetIntegerv(GL_POLYGON_MODE)[0] == GL_FILL else GL_FILL)
-            print("Wireframe toggled")
+            self.show_wireframe = not self.show_wireframe
+            print(f"Wireframe: {'ON' if self.show_wireframe else 'OFF'}")
     
     def on_resize(self, width, height):
         """Window resize handler"""
-        glViewport(0, 0, width, height)
+        gl.glViewport(0, 0, width, height)
     
     def run(self):
         """Start the viewer"""
@@ -516,7 +529,6 @@ def main():
     print("Supported textures: PNG, JPEG, JPG, WEBP, BMP, TGA")
     print("="*70 + "\n")
     
-    # Parse arguments
     obj_path = None
     texture_path = None
     
@@ -525,7 +537,6 @@ def main():
         if len(sys.argv) >= 3:
             texture_path = sys.argv[2]
     else:
-        # Auto-find OBJ in current directory
         print("No arguments provided, searching for OBJ file...\n")
         obj_files = list(Path('.').glob('*.obj'))
         
@@ -533,7 +544,6 @@ def main():
             obj_path = str(obj_files[0])
             print(f"Found: {obj_path}")
             
-            # Look for texture
             texture_formats = ['*.png', '*.jpg', '*.jpeg', '*.webp', '*.bmp', '*.tga']
             for pattern in texture_formats:
                 tex_files = list(Path('.').glob(pattern))
@@ -544,31 +554,27 @@ def main():
         else:
             print("ERROR: No OBJ file found!")
             print("\nUsage:")
-            print(f"  {sys.argv[0]} <model.obj> [texture.png]")
+            print(f"  python {sys.argv[0]} <model.obj> [texture.png]")
             print("\nOr drag and drop files onto the executable")
             input("\nPress Enter to exit...")
             return
     
-    # Validate OBJ file
     if not os.path.exists(obj_path):
         print(f"\nERROR: OBJ file not found: {obj_path}")
         input("\nPress Enter to exit...")
         return
     
-    # Validate texture (optional)
     if texture_path and not os.path.exists(texture_path):
         print(f"\nWARNING: Texture file not found: {texture_path}")
         print("Will try to auto-detect texture...\n")
         texture_path = None
     
-    # File size warning
     file_size_mb = os.path.getsize(obj_path) / (1024**2)
     if file_size_mb > 500:
         print(f"\n⚠ WARNING: Very large file ({file_size_mb:.0f} MB)")
         print("Loading may take several minutes and use significant RAM")
         print("Ensure you have enough free memory (recommended: 8GB+ free)\n")
     
-    # Create and run viewer
     viewer = OBJViewer(obj_path, texture_path)
     viewer.run()
 

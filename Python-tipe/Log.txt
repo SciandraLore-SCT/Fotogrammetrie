@@ -1,0 +1,29 @@
+
+======================================================================
+OBJ 3D Viewer - Multi-Format Texture Support
+======================================================================
+Supported textures: PNG, JPEG, JPG, WEBP, BMP, TGA
+======================================================================
+
+
+
+======================================================================
+FATAL ERROR
+======================================================================
+module 'pyglet.gl.gl' has no attribute 'GL_LIGHTING'
+
+Traceback (most recent call last):
+  File "D:\000-Lavoro\Git-Hub\Fotogrammetrie\Python-tipe\viewer.py", line 584, in <module>
+    main()
+    ~~~~^^
+  File "D:\000-Lavoro\Git-Hub\Fotogrammetrie\Python-tipe\viewer.py", line 578, in main
+    viewer = OBJViewer(obj_path, texture_path)
+  File "D:\000-Lavoro\Git-Hub\Fotogrammetrie\Python-tipe\viewer.py", line 81, in __init__
+    self.setup_gl()
+    ~~~~~~~~~~~~~^^
+  File "D:\000-Lavoro\Git-Hub\Fotogrammetrie\Python-tipe\viewer.py", line 102, in setup_gl
+    gl.glEnable(gl.GL_LIGHTING)
+                ^^^^^^^^^^^^^^
+AttributeError: module 'pyglet.gl.gl' has no attribute 'GL_LIGHTING'
+
+Press Enter to exit...
