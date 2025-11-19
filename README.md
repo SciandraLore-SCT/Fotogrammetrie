@@ -5,13 +5,14 @@ A project to enable the visualization of photogrammetry in environments such as 
 # Photogrammetry
 
 An html page for viewing .glb files with textures
+
 A standalone program featured in python for any devices
 
 # Limitations and issues
 
 Limitations of html file:
 - Does not support files larger than 600 MB
-- Supports textures via .jpg, .png, .bmp, and .webp files Limitations: Does not support files larger than 600 MB, supports textures via .jpg, .png, and .bmp files
+- Supports textures via .jpg, .png, .bmp, and .webp files 
 
 Limitations of standalone file:
 - Working progress for a Windows version
