@@ -4,10 +4,10 @@
 # Engine version v1.4.2.117426
 #
 
-newmtl 3D-TestModel_u1_v1
+newmtl Concrezione_BucoDelloSkilift_u1_v1
 Ka 1 1 1
 Kd 1 1 1
 d 1
 Ns 0
 illum 1
-map_Kd 3D-TestModel_u1_v1_diffuse.jpeg
+map_Kd Concrezione_BucoDelloSkilift_u1_v1_diffuse.jpeg
