@@ -107,8 +107,30 @@ class OBJViewer:
     
     def setup_gl(self):
         """Setup OpenGL state"""
+        # CRITICAL: Depth test super aggressivo
         pyglet.gl.glEnable(pyglet.gl.GL_DEPTH_TEST)
+        pyglet.gl.glDepthFunc(pyglet.gl.GL_LESS)  # Strict depth test
+        pyglet.gl.glDepthMask(pyglet.gl.GL_TRUE)
+        pyglet.gl.glClearDepth(1.0)
+        
+        # CRITICAL: Culling face per eliminare TUTTE le backfaces
         pyglet.gl.glEnable(pyglet.gl.GL_CULL_FACE)
+        pyglet.gl.glCullFace(pyglet.gl.GL_BACK)
+        pyglet.gl.glFrontFace(pyglet.gl.GL_CCW)
+        
+        # CRITICAL: NO blending = opacità totale
+        pyglet.gl.glDisable(pyglet.gl.GL_BLEND)
+        
+        # Alpha test per eliminare frammenti semi-trasparenti
+        pyglet.gl.glEnable(pyglet.gl.GL_SAMPLE_ALPHA_TO_COVERAGE)
+        
+        # Polygon offset per evitare z-fighting
+        pyglet.gl.glEnable(pyglet.gl.GL_POLYGON_OFFSET_FILL)
+        pyglet.gl.glPolygonOffset(1.0, 1.0)
+        
+        # Line rendering
+        pyglet.gl.glLineWidth(1.0)
+        
         pyglet.gl.glClearColor(0.1, 0.12, 0.15, 1.0)
     
     def create_shader(self):
@@ -160,19 +182,23 @@ class OBJViewer:
             vec3 view_dir = normalize(view_pos - v_pos);
             vec3 halfway = normalize(light_dir + view_dir);
             
-            float ambient = 0.3;
-            float diffuse = max(dot(v_normal, light_dir), 0.0) * 0.6;
-            float specular = pow(max(dot(v_normal, halfway), 0.0), 32.0) * 0.3;
+            float ambient = 0.4;
+            float diffuse = max(dot(v_normal, light_dir), 0.0) * 0.5;
+            float specular = pow(max(dot(v_normal, halfway), 0.0), 32.0) * 0.2;
             
             float lighting = ambient + diffuse + specular;
             
             vec3 color;
             if (use_texture) {
-                color = texture(tex, v_texcoord).rgb;
+                vec4 tex_color = texture(tex, v_texcoord);
+                color = tex_color.rgb;
+                // Discard fully transparent pixels
+                if (tex_color.a < 0.1) discard;
             } else {
                 color = v_color;
             }
             
+            // CRITICAL: Alpha = 1.0 sempre (completamente opaco)
             fragColor = vec4(color * lighting, 1.0);
         }
         """
@@ -223,11 +249,13 @@ class OBJViewer:
             self.loading_stage = "Loading OBJ geometry..."
             print(f"\nLoading OBJ file...")
             
+            # Use skip_materials for faster loading
             mesh = trimesh.load(
                 self.obj_path,
                 force='mesh',
                 process=False,
-                maintain_order=True
+                maintain_order=True,
+                skip_materials=True  # Skip material loading for speed
             )
             
             if isinstance(mesh, trimesh.Scene):
@@ -381,47 +409,70 @@ class OBJViewer:
     
     def draw_loading(self):
         """Loading screen"""
+        batch = pyglet.graphics.Batch()
+        
         title = pyglet.text.Label(
             'Loading OBJ Model',
-            font_size=20,
-            x=self.window.width // 2, y=self.window.height // 2 + 40,
-            anchor_x='center', anchor_y='center'
+            font_name='Arial',
+            font_size=24,
+            x=self.window.width // 2, 
+            y=self.window.height // 2 + 60,
+            anchor_x='center', 
+            anchor_y='center',
+            batch=batch
         )
-        title.draw()
         
         stage = pyglet.text.Label(
             self.loading_stage,
-            font_size=14,
-            x=self.window.width // 2, y=self.window.height // 2,
-            anchor_x='center', anchor_y='center',
-            color=(200, 200, 200, 255)
+            font_name='Arial',
+            font_size=16,
+            x=self.window.width // 2, 
+            y=self.window.height // 2,
+            anchor_x='center', 
+            anchor_y='center',
+            color=(200, 200, 200, 255),
+            batch=batch
         )
-        stage.draw()
         
         if self.file_size_mb > 0:
             info = pyglet.text.Label(
                 f'File size: {self.file_size_mb:.1f} MB - Please wait...',
-                font_size=11,
-                x=self.window.width // 2, y=self.window.height // 2 - 40,
-                anchor_x='center', anchor_y='center',
-                color=(150, 150, 150, 255)
+                font_name='Arial',
+                font_size=13,
+                x=self.window.width // 2, 
+                y=self.window.height // 2 - 60,
+                anchor_x='center', 
+                anchor_y='center',
+                color=(150, 150, 150, 255),
+                batch=batch
             )
-            info.draw()
+        
+        batch.draw()
     
     def draw_error(self):
         """Error screen"""
+        batch = pyglet.graphics.Batch()
+        
         label = pyglet.text.Label(
             f'ERROR:\n\n{self.error_msg}',
-            font_size=14,
-            x=self.window.width // 2, y=self.window.height // 2,
-            anchor_x='center', anchor_y='center',
-            multiline=True, width=800,
-            color=(255, 120, 120, 255)
+            font_name='Arial',
+            font_size=16,
+            x=self.window.width // 2, 
+            y=self.window.height // 2,
+            anchor_x='center', 
+            anchor_y='center',
+            multiline=True, 
+            width=800,
+            color=(255, 120, 120, 255),
+            batch=batch
         )
-        label.draw()
+        
+        batch.draw()
     
     def draw_ui(self):
         """UI overlay"""
+        batch = pyglet.graphics.Batch()
+        
         stats = (
             f'Vertices: {self.vertex_count:,} | '
             f'Faces: {self.face_count:,} | '
@@ -430,12 +481,28 @@ class OBJViewer:
             f'Wireframe: {"ON" if self.show_wireframe else "OFF"}'
         )
         
-        label = pyglet.text.Label(
-            stats, font_size=11,
-            x=10, y=self.window.height - 20,
-            color=(220, 220, 220, 255)
+        label_stats = pyglet.text.Label(
+            stats, 
+            font_name='Arial',
+            font_size=13,
+            x=20, 
+            y=self.window.height - 30,
+            color=(230, 230, 230, 255),
+            batch=batch
         )
-        label.draw()
+        
+        controls = 'LMB: Rotate | RMB: Pan | Scroll: Zoom | R: Reset | T: Texture | W: Wireframe | F: Fullscreen'
+        label_controls = pyglet.text.Label(
+            controls,
+            font_name='Arial',
+            font_size=11,
+            x=20,
+            y=20,
+            color=(180, 180, 180, 255),
+            batch=batch
+        )
+        
+        batch.draw()
     
     def on_drag(self, x, y, dx, dy, buttons, mods):
         """Mouse drag"""
@@ -461,10 +528,16 @@ class OBJViewer:
             self.distance = 5.0
             self.pan_x = 0
             self.pan_y = 0
+            print("View reset")
+        elif symbol == key.F:
+            self.window.set_fullscreen(not self.window.fullscreen)
+            print(f"Fullscreen: {'ON' if self.window.fullscreen else 'OFF'}")
         elif symbol == key.T and self.texture:
             self.has_texture = not self.has_texture
+            print(f"Texture: {'ON' if self.has_texture else 'OFF'}")
         elif symbol == key.W:
             self.show_wireframe = not self.show_wireframe
+            print(f"Wireframe: {'ON' if self.show_wireframe else 'OFF'}")
     
     def on_resize(self, width, height):
         """Resize"""
