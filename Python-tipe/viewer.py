@@ -1,7 +1,9 @@
 """
-OBJ 3D Viewer - Compatible with Pyglet 2.x
-Multi-format texture support: PNG, JPEG, JPG, WEBP, BMP, TGA
-Handles large OBJ files (2GB+)
+OBJ 3D Viewer - Complete Version
+- Adjustable opacity in real-time
+- Multi-format texture support
+- Reference grid
+- All pyglet 2.x compatible
 """
 
 import sys
@@ -52,7 +54,6 @@ class OBJViewer:
                 config=config
             )
         except:
-            # Fallback to basic config if MSAA not supported
             config = pyglet.gl.Config(double_buffer=True, depth_size=24)
             self.window = pyglet.window.Window(
                 width=1400,
@@ -66,11 +67,11 @@ class OBJViewer:
         self.texture_path = texture_path
         
         # Camera
-        self.rot_x = 20
-        self.rot_y = 30
+        self.rot_x = 20.0
+        self.rot_y = 30.0
         self.distance = 5.0
-        self.pan_x = 0
-        self.pan_y = 0
+        self.pan_x = 0.0
+        self.pan_y = 0.0
         
         # Model
         self.vertex_list = None
@@ -78,11 +79,24 @@ class OBJViewer:
         self.texture = None
         self.has_texture = False
         
+        # Grid
+        self.grid_vertex_list = None
+        self.grid_shader = None
+        
+        # UI background shader
+        self.ui_shader = None
+        self.ui_bg_top = None
+        self.ui_bg_bottom = None
+        
         # State
         self.loaded = False
         self.error_msg = None
         self.loading_stage = "Initializing..."
         self.show_wireframe = False
+        self.show_grid = True
+        
+        # Opacity control (adjustable in real-time)
+        self.opacity = 1.0
         
         # Stats
         self.file_size_mb = 0
@@ -100,41 +114,35 @@ class OBJViewer:
         
         # Setup
         self.setup_gl()
-        self.create_shader()
+        self.create_shaders()
+        self.create_grid()
+        self.create_ui_backgrounds()
         
         # Load model
         pyglet.clock.schedule_once(self.load_model, 0.1)
     
     def setup_gl(self):
         """Setup OpenGL state"""
-        # CRITICAL: Depth test super aggressivo
+        # Depth test for 3D
         pyglet.gl.glEnable(pyglet.gl.GL_DEPTH_TEST)
-        pyglet.gl.glDepthFunc(pyglet.gl.GL_LESS)  # Strict depth test
-        pyglet.gl.glDepthMask(pyglet.gl.GL_TRUE)
-        pyglet.gl.glClearDepth(1.0)
+        pyglet.gl.glDepthFunc(pyglet.gl.GL_LESS)
         
-        # CRITICAL: Culling face per eliminare TUTTE le backfaces
+        # Face culling
         pyglet.gl.glEnable(pyglet.gl.GL_CULL_FACE)
         pyglet.gl.glCullFace(pyglet.gl.GL_BACK)
-        pyglet.gl.glFrontFace(pyglet.gl.GL_CCW)
         
-        # CRITICAL: NO blending = opacità totale
-        pyglet.gl.glDisable(pyglet.gl.GL_BLEND)
+        # Enable blending for opacity
+        pyglet.gl.glEnable(pyglet.gl.GL_BLEND)
+        pyglet.gl.glBlendFunc(pyglet.gl.GL_SRC_ALPHA, pyglet.gl.GL_ONE_MINUS_SRC_ALPHA)
         
-        # Alpha test per eliminare frammenti semi-trasparenti
-        pyglet.gl.glEnable(pyglet.gl.GL_SAMPLE_ALPHA_TO_COVERAGE)
-        
-        # Polygon offset per evitare z-fighting
-        pyglet.gl.glEnable(pyglet.gl.GL_POLYGON_OFFSET_FILL)
-        pyglet.gl.glPolygonOffset(1.0, 1.0)
-        
-        # Line rendering
-        pyglet.gl.glLineWidth(1.0)
+        # Line width for wireframe and grid
+        pyglet.gl.glLineWidth(1.5)
         
         pyglet.gl.glClearColor(0.1, 0.12, 0.15, 1.0)
     
-    def create_shader(self):
-        """Create simple shader program"""
+    def create_shaders(self):
+        """Create shader programs"""
+        # Main model shader
         vertex_source = """
         #version 330 core
         
@@ -153,11 +161,12 @@ class OBJViewer:
         uniform mat4 model;
         
         void main() {
-            gl_Position = projection * view * model * vec4(position, 1.0);
+            vec4 world_pos = model * vec4(position, 1.0);
+            gl_Position = projection * view * world_pos;
             v_normal = normalize(mat3(model) * normal);
             v_color = color;
             v_texcoord = texcoord;
-            v_pos = vec3(model * vec4(position, 1.0));
+            v_pos = world_pos.xyz;
         }
         """
         
@@ -175,9 +184,10 @@ class OBJViewer:
         uniform sampler2D tex;
         uniform vec3 light_pos;
         uniform vec3 view_pos;
+        uniform float opacity;
         
         void main() {
-            // Simple lighting
+            // Lighting calculation
             vec3 light_dir = normalize(light_pos - v_pos);
             vec3 view_dir = normalize(view_pos - v_pos);
             vec3 halfway = normalize(light_dir + view_dir);
@@ -189,17 +199,17 @@ class OBJViewer:
             float lighting = ambient + diffuse + specular;
             
             vec3 color;
+            float alpha = opacity;
+            
             if (use_texture) {
                 vec4 tex_color = texture(tex, v_texcoord);
                 color = tex_color.rgb;
-                // Discard fully transparent pixels
-                if (tex_color.a < 0.1) discard;
+                alpha *= tex_color.a;
             } else {
                 color = v_color;
             }
             
-            // CRITICAL: Alpha = 1.0 sempre (completamente opaco)
-            fragColor = vec4(color * lighting, 1.0);
+            fragColor = vec4(color * lighting, alpha);
         }
         """
         
@@ -207,19 +217,170 @@ class OBJViewer:
             pyglet.graphics.shader.Shader(vertex_source, 'vertex'),
             pyglet.graphics.shader.Shader(fragment_source, 'fragment')
         )
+        
+        # Grid shader (simple, no lighting)
+        grid_vertex_source = """
+        #version 330 core
+        
+        in vec3 position;
+        in vec3 color;
+        
+        out vec3 v_color;
+        
+        uniform mat4 projection;
+        uniform mat4 view;
+        uniform mat4 model;
+        
+        void main() {
+            gl_Position = projection * view * model * vec4(position, 1.0);
+            v_color = color;
+        }
+        """
+        
+        grid_fragment_source = """
+        #version 330 core
+        
+        in vec3 v_color;
+        out vec4 fragColor;
+        
+        void main() {
+            fragColor = vec4(v_color, 1.0);
+        }
+        """
+        
+        self.grid_shader = pyglet.graphics.shader.ShaderProgram(
+            pyglet.graphics.shader.Shader(grid_vertex_source, 'vertex'),
+            pyglet.graphics.shader.Shader(grid_fragment_source, 'fragment')
+        )
+        
+        # Simple 2D shader for UI backgrounds
+        ui_vertex_source = """
+        #version 330 core
+        
+        in vec2 position;
+        
+        uniform mat4 projection;
+        
+        void main() {
+            gl_Position = projection * vec4(position, 0.0, 1.0);
+        }
+        """
+        
+        ui_fragment_source = """
+        #version 330 core
+        
+        out vec4 fragColor;
+        uniform vec4 color;
+        
+        void main() {
+            fragColor = color;
+        }
+        """
+        
+        self.ui_shader = pyglet.graphics.shader.ShaderProgram(
+            pyglet.graphics.shader.Shader(ui_vertex_source, 'vertex'),
+            pyglet.graphics.shader.Shader(ui_fragment_source, 'fragment')
+        )
+    
+    def create_grid(self):
+        """Create reference grid"""
+        grid_size = 10
+        grid_spacing = 0.5
+        
+        vertices = []
+        colors = []
+        
+        # Lines parallel to X axis
+        for i in range(-grid_size, grid_size + 1):
+            z = i * grid_spacing
+            vertices.extend([
+                -grid_size * grid_spacing, 0, z,
+                grid_size * grid_spacing, 0, z
+            ])
+            # Center lines brighter
+            if i == 0:
+                colors.extend([0.5, 0.5, 0.5, 0.5, 0.5, 0.5])
+            else:
+                colors.extend([0.3, 0.3, 0.3, 0.3, 0.3, 0.3])
+        
+        # Lines parallel to Z axis
+        for i in range(-grid_size, grid_size + 1):
+            x = i * grid_spacing
+            vertices.extend([
+                x, 0, -grid_size * grid_spacing,
+                x, 0, grid_size * grid_spacing
+            ])
+            if i == 0:
+                colors.extend([0.5, 0.5, 0.5, 0.5, 0.5, 0.5])
+            else:
+                colors.extend([0.3, 0.3, 0.3, 0.3, 0.3, 0.3])
+        
+        vertex_count = len(vertices) // 3
+        
+        # Create vertex list with grid shader
+        self.grid_vertex_list = self.grid_shader.vertex_list(
+            vertex_count,
+            pyglet.gl.GL_LINES,
+            position=('f', vertices),
+            color=('f', colors)
+        )
+    
+    def create_ui_backgrounds(self):
+        """Create UI background rectangles"""
+        # Top bar (will be resized on window resize)
+        self.update_ui_backgrounds()
+    
+    def update_ui_backgrounds(self):
+        """Update UI background sizes based on window size"""
+        # Top bar background
+        top_vertices = [
+            0, self.window.height - 60,
+            self.window.width, self.window.height - 60,
+            self.window.width, self.window.height,
+            0, self.window.height,
+            0, self.window.height - 60,
+            self.window.width, self.window.height
+        ]
+        
+        # Bottom bar background
+        bottom_vertices = [
+            0, 0,
+            self.window.width, 0,
+            self.window.width, 55,
+            0, 55,
+            0, 0,
+            self.window.width, 55
+        ]
+        
+        # Create vertex lists for backgrounds
+        self.ui_bg_top = self.ui_shader.vertex_list(
+            6,
+            pyglet.gl.GL_TRIANGLES,
+            position=('f', top_vertices)
+        )
+        
+        self.ui_bg_bottom = self.ui_shader.vertex_list(
+            6,
+            pyglet.gl.GL_TRIANGLES,
+            position=('f', bottom_vertices)
+        )
     
     def load_texture(self, path):
-        """Load texture"""
+        """Load texture from file"""
         if not path or not os.path.exists(path):
             return False
         
         try:
-            print(f"\nLoading texture: {Path(path).name}")
+            ext = Path(path).suffix.lower()
+            print(f"\nLoading texture: {Path(path).name} ({ext})")
+            
             img = image.load(path)
             self.texture = img.get_texture()
             self.has_texture = True
+            
             print(f"✓ Texture loaded: {img.width}x{img.height}px")
             return True
+            
         except Exception as e:
             print(f"✗ Failed to load texture: {e}")
             return False
@@ -238,7 +399,7 @@ class OBJViewer:
             if self.file_size_mb > 100:
                 print(f"⚠ Large file! This may take several minutes...")
             
-            # Load texture
+            # Load texture first
             if self.texture_path:
                 self.loading_stage = "Loading texture..."
                 self.load_texture(self.texture_path)
@@ -249,13 +410,12 @@ class OBJViewer:
             self.loading_stage = "Loading OBJ geometry..."
             print(f"\nLoading OBJ file...")
             
-            # Use skip_materials for faster loading
             mesh = trimesh.load(
                 self.obj_path,
                 force='mesh',
                 process=False,
                 maintain_order=True,
-                skip_materials=True  # Skip material loading for speed
+                skip_materials=True
             )
             
             if isinstance(mesh, trimesh.Scene):
@@ -322,14 +482,20 @@ class OBJViewer:
             
             self.window.set_caption(f'OBJ Viewer - {Path(self.obj_path).name}')
             
-            print(f"\nControls:")
-            print(f"  Left drag:   Rotate")
-            print(f"  Right drag:  Pan")
-            print(f"  Scroll:      Zoom")
-            print(f"  R:           Reset")
-            print(f"  T:           Toggle texture")
-            print(f"  W:           Wireframe")
-            print(f"  ESC:         Exit")
+            print(f"\n{'Controls:'}")
+            print(f"  Left drag:       Rotate model")
+            print(f"  Right drag:      Pan camera")
+            print(f"  Scroll:          Zoom in/out")
+            print(f"  +/- (or =/_ ):   Increase/Decrease opacity")
+            print(f"  1:               10% opacity")
+            print(f"  5:               50% opacity")
+            print(f"  0:               100% opacity (fully opaque)")
+            print(f"  R:               Reset view")
+            print(f"  T:               Toggle texture")
+            print(f"  W:               Toggle wireframe")
+            print(f"  G:               Toggle grid")
+            print(f"  F:               Fullscreen")
+            print(f"  ESC:             Exit")
             
         except Exception as e:
             self.error_msg = str(e)
@@ -341,7 +507,7 @@ class OBJViewer:
             self.window.set_caption('Error loading model')
     
     def auto_find_texture(self):
-        """Auto-find texture"""
+        """Auto-find texture file"""
         obj_dir = Path(self.obj_path).parent
         obj_name = Path(self.obj_path).stem
         
@@ -356,8 +522,9 @@ class OBJViewer:
         return False
     
     def draw(self):
-        """Main render"""
-        self.window.clear()
+        """Main render function"""
+        # Clear buffers
+        pyglet.gl.glClear(pyglet.gl.GL_COLOR_BUFFER_BIT | pyglet.gl.GL_DEPTH_BUFFER_BIT)
         
         if self.error_msg:
             self.draw_error()
@@ -380,7 +547,11 @@ class OBJViewer:
         # Model matrix
         model = Mat4()
         
-        # Use shader
+        # Draw grid first (behind everything)
+        if self.show_grid:
+            self.draw_grid(projection, view, model)
+        
+        # Draw model
         self.shader.use()
         self.shader['projection'] = projection
         self.shader['view'] = view
@@ -388,6 +559,15 @@ class OBJViewer:
         self.shader['use_texture'] = self.has_texture and self.texture is not None
         self.shader['light_pos'] = (5.0, 5.0, 5.0)
         self.shader['view_pos'] = (self.pan_x, self.pan_y, self.distance)
+        self.shader['opacity'] = self.opacity
+        
+        # CRITICAL: Disable culling when transparency is used
+        if self.opacity < 1.0:
+            pyglet.gl.glDisable(pyglet.gl.GL_CULL_FACE)
+            pyglet.gl.glDepthMask(pyglet.gl.GL_FALSE)
+        else:
+            pyglet.gl.glEnable(pyglet.gl.GL_CULL_FACE)
+            pyglet.gl.glDepthMask(pyglet.gl.GL_TRUE)
         
         # Bind texture
         if self.has_texture and self.texture:
@@ -395,163 +575,278 @@ class OBJViewer:
             pyglet.gl.glBindTexture(pyglet.gl.GL_TEXTURE_2D, self.texture.id)
             self.shader['tex'] = 0
         
-        # Wireframe
+        # Wireframe mode
         if self.show_wireframe:
             pyglet.gl.glPolygonMode(pyglet.gl.GL_FRONT_AND_BACK, pyglet.gl.GL_LINE)
         else:
             pyglet.gl.glPolygonMode(pyglet.gl.GL_FRONT_AND_BACK, pyglet.gl.GL_FILL)
         
-        # Draw
+        # Draw model
         self.vertex_list.draw(pyglet.gl.GL_TRIANGLES)
         
-        # UI
+        # Reset states
+        pyglet.gl.glPolygonMode(pyglet.gl.GL_FRONT_AND_BACK, pyglet.gl.GL_FILL)
+        pyglet.gl.glEnable(pyglet.gl.GL_CULL_FACE)
+        pyglet.gl.glDepthMask(pyglet.gl.GL_TRUE)
+        
+        # Draw UI overlay
         self.draw_ui()
     
-    def draw_loading(self):
-        """Loading screen"""
-        batch = pyglet.graphics.Batch()
+    def draw_grid(self, projection, view, model):
+        """Draw reference grid"""
+        # Draw grid behind everything
+        pyglet.gl.glDepthMask(pyglet.gl.GL_FALSE)
         
+        self.grid_shader.use()
+        self.grid_shader['projection'] = projection
+        self.grid_shader['view'] = view
+        self.grid_shader['model'] = model
+        
+        self.grid_vertex_list.draw(pyglet.gl.GL_LINES)
+        
+        # Re-enable depth writes
+        pyglet.gl.glDepthMask(pyglet.gl.GL_TRUE)
+    
+    def draw_loading(self):
+        """Loading screen with proper text rendering"""
+        # Disable depth test for 2D UI
+        pyglet.gl.glDisable(pyglet.gl.GL_DEPTH_TEST)
+        
+        # Create labels individually (not batched) for better rendering
         title = pyglet.text.Label(
             'Loading OBJ Model',
-            font_name='Arial',
-            font_size=24,
+            font_name='Consolas',  # Monospace font più leggibile
+            font_size=26,
             x=self.window.width // 2, 
-            y=self.window.height // 2 + 60,
+            y=self.window.height // 2 + 80,
             anchor_x='center', 
             anchor_y='center',
-            batch=batch
+            color=(255, 255, 255, 255)
         )
+        title.draw()
         
         stage = pyglet.text.Label(
             self.loading_stage,
-            font_name='Arial',
-            font_size=16,
+            font_name='Consolas',
+            font_size=18,
             x=self.window.width // 2, 
             y=self.window.height // 2,
             anchor_x='center', 
             anchor_y='center',
-            color=(200, 200, 200, 255),
-            batch=batch
+            color=(220, 220, 220, 255)
         )
+        stage.draw()
         
         if self.file_size_mb > 0:
             info = pyglet.text.Label(
                 f'File size: {self.file_size_mb:.1f} MB - Please wait...',
-                font_name='Arial',
-                font_size=13,
+                font_name='Consolas',
+                font_size=14,
                 x=self.window.width // 2, 
-                y=self.window.height // 2 - 60,
+                y=self.window.height // 2 - 80,
                 anchor_x='center', 
                 anchor_y='center',
-                color=(150, 150, 150, 255),
-                batch=batch
+                color=(180, 180, 180, 255)
             )
+            info.draw()
         
-        batch.draw()
+        # Re-enable depth test
+        pyglet.gl.glEnable(pyglet.gl.GL_DEPTH_TEST)
     
     def draw_error(self):
-        """Error screen"""
-        batch = pyglet.graphics.Batch()
+        """Error screen with proper text rendering"""
+        pyglet.gl.glDisable(pyglet.gl.GL_DEPTH_TEST)
         
         label = pyglet.text.Label(
             f'ERROR:\n\n{self.error_msg}',
-            font_name='Arial',
-            font_size=16,
+            font_name='Consolas',
+            font_size=18,
             x=self.window.width // 2, 
             y=self.window.height // 2,
             anchor_x='center', 
             anchor_y='center',
             multiline=True, 
-            width=800,
-            color=(255, 120, 120, 255),
-            batch=batch
+            width=900,
+            color=(255, 150, 150, 255)
         )
+        label.draw()
         
-        batch.draw()
+        pyglet.gl.glEnable(pyglet.gl.GL_DEPTH_TEST)
     
     def draw_ui(self):
-        """UI overlay"""
-        batch = pyglet.graphics.Batch()
+        """UI overlay with clear, readable text"""
+        # Disable depth test for UI rendering
+        pyglet.gl.glDisable(pyglet.gl.GL_DEPTH_TEST)
         
-        stats = (
+        # Create 2D orthographic projection for UI
+        projection_2d = Mat4.orthogonal_projection(0, self.window.width, 0, self.window.height, -1, 1)
+        
+        # Draw background bars using shader
+        self.ui_shader.use()
+        self.ui_shader['projection'] = projection_2d
+        self.ui_shader['color'] = (0.0, 0.0, 0.0, 0.75)  # Semi-transparent black
+        
+        # Draw top background
+        self.ui_bg_top.draw(pyglet.gl.GL_TRIANGLES)
+        
+        # Draw bottom background
+        self.ui_bg_bottom.draw(pyglet.gl.GL_TRIANGLES)
+        
+        # Now draw text on top of backgrounds
+        # Stats bar at top
+        stats_text = (
             f'Vertices: {self.vertex_count:,} | '
             f'Faces: {self.face_count:,} | '
             f'Zoom: {self.distance:.1f}x | '
+            f'Opacity: {int(self.opacity * 100)}% | '
             f'Texture: {"ON" if self.has_texture else "OFF"} | '
-            f'Wireframe: {"ON" if self.show_wireframe else "OFF"}'
+            f'Wireframe: {"ON" if self.show_wireframe else "OFF"} | '
+            f'Grid: {"ON" if self.show_grid else "OFF"}'
         )
         
         label_stats = pyglet.text.Label(
-            stats, 
-            font_name='Arial',
-            font_size=13,
-            x=20, 
-            y=self.window.height - 30,
-            color=(230, 230, 230, 255),
-            batch=batch
+            stats_text,
+            font_name='Consolas',
+            font_size=14,
+            x=25,
+            y=self.window.height - 35,
+            anchor_x='left',
+            anchor_y='center',
+            color=(240, 240, 240, 255)
+        )
+        label_stats.draw()
+        
+        # Controls bar at bottom
+        controls_text = (
+            'LMB: Rotate | RMB: Pan | Scroll: Zoom | +/-: Opacity | '
+            '1-9: Opacity 10-90% | 0: 100% | R: Reset | T: Texture | W: Wire | G: Grid | F: Full'
         )
         
-        controls = 'LMB: Rotate | RMB: Pan | Scroll: Zoom | R: Reset | T: Texture | W: Wireframe | F: Fullscreen'
         label_controls = pyglet.text.Label(
-            controls,
-            font_name='Arial',
-            font_size=11,
-            x=20,
-            y=20,
-            color=(180, 180, 180, 255),
-            batch=batch
+            controls_text,
+            font_name='Consolas',
+            font_size=12,
+            x=25,
+            y=27,
+            anchor_x='left',
+            anchor_y='center',
+            color=(220, 220, 220, 255)
         )
+        label_controls.draw()
         
-        batch.draw()
+        # Re-enable depth test
+        pyglet.gl.glEnable(pyglet.gl.GL_DEPTH_TEST)
     
     def on_drag(self, x, y, dx, dy, buttons, mods):
-        """Mouse drag"""
+        """Mouse drag handler"""
         if buttons & mouse.LEFT:
             self.rot_y += dx * 0.5
             self.rot_x += dy * 0.5
         elif buttons & mouse.RIGHT:
-            self.pan_x += dx * 0.01
-            self.pan_y += dy * 0.01
+            self.pan_x += dx * 0.01 * (self.distance / 5)
+            self.pan_y += dy * 0.01 * (self.distance / 5)
     
     def on_scroll(self, x, y, sx, sy):
-        """Mouse scroll"""
+        """Mouse scroll handler"""
         self.distance -= sy * 0.3
         self.distance = max(1.0, min(50, self.distance))
     
     def on_key(self, symbol, mods):
-        """Keyboard"""
+        """Keyboard handler"""
         if symbol == key.ESCAPE:
             self.window.close()
+        
         elif symbol == key.R:
-            self.rot_x = 20
-            self.rot_y = 30
+            self.rot_x = 20.0
+            self.rot_y = 30.0
             self.distance = 5.0
-            self.pan_x = 0
-            self.pan_y = 0
+            self.pan_x = 0.0
+            self.pan_y = 0.0
             print("View reset")
+        
         elif symbol == key.F:
             self.window.set_fullscreen(not self.window.fullscreen)
             print(f"Fullscreen: {'ON' if self.window.fullscreen else 'OFF'}")
+        
         elif symbol == key.T and self.texture:
             self.has_texture = not self.has_texture
             print(f"Texture: {'ON' if self.has_texture else 'OFF'}")
+        
         elif symbol == key.W:
             self.show_wireframe = not self.show_wireframe
             print(f"Wireframe: {'ON' if self.show_wireframe else 'OFF'}")
+        
+        elif symbol == key.G:
+            self.show_grid = not self.show_grid
+            print(f"Grid: {'ON' if self.show_grid else 'OFF'}")
+        
+        # Opacity controls
+        elif symbol == key.PLUS or symbol == key.EQUAL:
+            self.opacity = min(1.0, self.opacity + 0.1)
+            print(f"Opacity: {self.opacity:.1f}")
+        
+        elif symbol == key.MINUS or symbol == key.UNDERSCORE:
+            self.opacity = max(0.1, self.opacity - 0.1)
+            print(f"Opacity: {self.opacity:.1f}")
+        
+        elif symbol == key._1:
+            self.opacity = 0.1
+            print(f"Opacity: 10%")
+        
+        elif symbol == key._2:
+            self.opacity = 0.2
+            print(f"Opacity: 20%")
+        
+        elif symbol == key._3:
+            self.opacity = 0.3
+            print(f"Opacity: 30%")
+        
+        elif symbol == key._4:
+            self.opacity = 0.4
+            print(f"Opacity: 40%")
+        
+        elif symbol == key._5:
+            self.opacity = 0.5
+            print(f"Opacity: 50%")
+        
+        elif symbol == key._6:
+            self.opacity = 0.6
+            print(f"Opacity: 60%")
+        
+        elif symbol == key._7:
+            self.opacity = 0.7
+            print(f"Opacity: 70%")
+        
+        elif symbol == key._8:
+            self.opacity = 0.8
+            print(f"Opacity: 80%")
+        
+        elif symbol == key._9:
+            self.opacity = 0.9
+            print(f"Opacity: 90%")
+        
+        elif symbol == key._0:
+            self.opacity = 1.0
+            print(f"Opacity: 100% (fully opaque)")
     
     def on_resize(self, width, height):
-        """Resize"""
+        """Window resize handler"""
         pyglet.gl.glViewport(0, 0, width, height)
+        # Update UI backgrounds for new window size
+        self.update_ui_backgrounds()
     
     def run(self):
-        """Start"""
+        """Start the viewer"""
         pyglet.app.run()
 
 
 def main():
+    """Entry point"""
     print("\n" + "="*70)
-    print("OBJ 3D Viewer")
+    print("OBJ 3D Viewer - Complete Edition")
     print("="*70)
+    print("Features: Adjustable opacity, Reference grid, Multi-format textures")
+    print("="*70 + "\n")
     
     obj_path = None
     texture_path = None
@@ -579,6 +874,12 @@ def main():
     if texture_path and not os.path.exists(texture_path):
         print(f"\nWARNING: Texture not found: {texture_path}")
         texture_path = None
+    
+    file_size_mb = os.path.getsize(obj_path) / (1024**2)
+    if file_size_mb > 500:
+        print(f"\n⚠ WARNING: Very large file ({file_size_mb:.0f} MB)")
+        print("Loading may take several minutes")
+        print("Ensure you have enough free memory (recommended: 8GB+ free)\n")
     
     viewer = OBJViewer(obj_path, texture_path)
     viewer.run()
