@@ -8,6 +8,7 @@ OBJ 3D Viewer - Complete Version
 
 import sys
 import os
+import time
 from pathlib import Path
 
 try:
@@ -25,6 +26,8 @@ except ImportError:
 try:
     import trimesh
     import numpy as np
+    import multiprocessing
+    from concurrent.futures import ThreadPoolExecutor
 except ImportError:
     print("ERROR: trimesh not installed!")
     print("Install with: pip install trimesh")
@@ -386,7 +389,7 @@ class OBJViewer:
             return False
     
     def load_model(self, dt):
-        """Load OBJ file"""
+        """Load OBJ file with aggressive optimizations"""
         try:
             self.file_size_mb = os.path.getsize(self.obj_path) / (1024**2)
             
@@ -397,88 +400,188 @@ class OBJViewer:
             print(f"Size: {self.file_size_mb:.2f} MB")
             
             if self.file_size_mb > 100:
-                print(f"⚠ Large file! This may take several minutes...")
+                print(f"⚠ Large file! Optimizing for speed...")
             
-            # Load texture first
+            # Load texture first (parallel with thinking time)
             if self.texture_path:
                 self.loading_stage = "Loading texture..."
                 self.load_texture(self.texture_path)
             else:
                 self.auto_find_texture()
             
-            # Load OBJ
+            # Load OBJ with aggressive optimizations
             self.loading_stage = "Loading OBJ geometry..."
-            print(f"\nLoading OBJ file...")
+            print(f"\nLoading OBJ file (fast custom parser)...")
             
-            mesh = trimesh.load(
-                self.obj_path,
-                force='mesh',
-                process=False,
-                maintain_order=True,
-                skip_materials=True
-            )
+            start_time = time.time()
             
-            if isinstance(mesh, trimesh.Scene):
-                print(f"Scene with {len(mesh.geometry)} meshes, merging...")
-                mesh = trimesh.util.concatenate(list(mesh.geometry.values()))
+            # Use custom fast parser for OBJ files
+            use_fast_parser = True  # Can be toggled
             
-            print(f"Vertices: {len(mesh.vertices):,}")
-            print(f"Faces: {len(mesh.faces):,}")
-            self.face_count = len(mesh.faces)
+            if use_fast_parser and self.obj_path.lower().endswith('.obj'):
+                try:
+                    verts, faces, normals, uvs, face_normals, face_uvs = self.fast_load_obj(self.obj_path)
+                    
+                    load_time = time.time() - start_time
+                    print(f"✓ Fast loader: {load_time:.2f}s")
+                    print(f"Vertices: {len(verts):,}")
+                    print(f"Faces: {len(faces):,}")
+                    self.face_count = len(faces)
+                    
+                    # Use loaded data
+                    use_fast_path = True
+                    
+                except Exception as e:
+                    print(f"Fast parser failed: {e}")
+                    print("Falling back to trimesh...")
+                    use_fast_path = False
+            else:
+                use_fast_path = False
             
-            # Process geometry
-            self.loading_stage = "Processing geometry..."
+            if not use_fast_path:
+                # Fallback to trimesh
+                print(f"Using trimesh loader...")
+                
+                try:
+                    mesh = trimesh.load(
+                        self.obj_path,
+                        force='mesh',
+                        process=False,
+                        maintain_order=True,
+                        skip_materials=True,
+                        skip_texture=True,
+                        validate=False,
+                        file_type='obj'
+                    )
+                except:
+                    mesh = trimesh.load(
+                        self.obj_path,
+                        force='mesh',
+                        process=False,
+                        maintain_order=True,
+                        skip_materials=True,
+                        validate=False
+                    )
+                
+                load_time = time.time() - start_time
+                print(f"File loaded in {load_time:.2f}s")
+                
+                if isinstance(mesh, trimesh.Scene):
+                    print(f"Scene with {len(mesh.geometry)} meshes, merging...")
+                    start_merge = time.time()
+                    mesh = trimesh.util.concatenate(list(mesh.geometry.values()))
+                    print(f"Merged in {time.time() - start_merge:.2f}s")
+                
+                print(f"Vertices: {len(mesh.vertices):,}")
+                print(f"Faces: {len(mesh.faces):,}")
+                self.face_count = len(mesh.faces)
+                
+                # Extract data from mesh
+                verts = mesh.vertices.astype(np.float32, copy=False)
+                faces = mesh.faces
+                
+                if hasattr(mesh, 'vertex_normals') and mesh.vertex_normals is not None:
+                    normals = mesh.vertex_normals.astype(np.float32, copy=False)
+                else:
+                    normals = None
+                
+                if hasattr(mesh.visual, 'uv') and mesh.visual.uv is not None:
+                    uvs = mesh.visual.uv.astype(np.float32, copy=False)
+                else:
+                    uvs = None
             
-            verts = mesh.vertices.astype(np.float32)
+            # Process geometry with optimizations
+            self.loading_stage = "Processing geometry (optimized)..."
+            start_process = time.time()
+            
+            # Center and normalize
             center = verts.mean(axis=0)
-            verts -= center
+            verts = verts - center
             max_extent = np.max(np.abs(verts))
             if max_extent > 0:
-                verts *= 2.0 / max_extent
+                verts *= (2.0 / max_extent)
             
-            # Prepare data
-            vertices = verts[mesh.faces].reshape(-1, 3)
+            print(f"Geometry processed in {time.time() - start_process:.2f}s")
             
-            # Normals
-            if hasattr(mesh, 'vertex_normals'):
-                normals = mesh.vertex_normals.astype(np.float32)[mesh.faces].reshape(-1, 3)
-            else:
-                mesh.fix_normals()
-                normals = mesh.vertex_normals.astype(np.float32)[mesh.faces].reshape(-1, 3)
+            # Handle normals
+            self.loading_stage = "Computing normals..."
+            start_normals = time.time()
+            
+            if normals is None:
+                print("Computing vertex normals...")
+                # Compute normals manually (faster than trimesh for simple cases)
+                normals = np.zeros_like(verts)
+                
+                # Compute face normals and accumulate to vertices
+                for face in faces:
+                    v0, v1, v2 = verts[face[0]], verts[face[1]], verts[face[2]]
+                    face_normal = np.cross(v1 - v0, v2 - v0)
+                    normals[face[0]] += face_normal
+                    normals[face[1]] += face_normal
+                    normals[face[2]] += face_normal
+                
+                # Normalize
+                norms = np.linalg.norm(normals, axis=1, keepdims=True)
+                norms[norms == 0] = 1  # Avoid division by zero
+                normals = normals / norms
+            
+            print(f"Normals ready in {time.time() - start_normals:.2f}s")
             
             # Colors
-            if hasattr(mesh.visual, 'vertex_colors'):
-                colors = (mesh.visual.vertex_colors[:, :3].astype(np.float32) / 255.0)[mesh.faces].reshape(-1, 3)
+            if use_fast_path:
+                # Fast path: no vertex colors from fast parser
+                colors = np.full((len(verts), 3), 0.75, dtype=np.float32)
             else:
-                colors = np.ones((len(vertices), 3), dtype=np.float32) * 0.75
+                # Trimesh path: check for vertex colors
+                if hasattr(mesh.visual, 'vertex_colors') and mesh.visual.vertex_colors is not None:
+                    colors = (mesh.visual.vertex_colors[:, :3].astype(np.float32, copy=False) / 255.0)
+                else:
+                    colors = np.full((len(verts), 3), 0.75, dtype=np.float32)
             
             # UVs
-            if hasattr(mesh.visual, 'uv') and mesh.visual.uv is not None:
-                uvs = mesh.visual.uv.astype(np.float32)[mesh.faces].reshape(-1, 2)
-                print(f"✓ UV mapping found")
-            else:
-                uvs = np.zeros((len(vertices), 2), dtype=np.float32)
+            if uvs is None:
+                uvs = np.zeros((len(verts), 2), dtype=np.float32)
                 print("⚠ No UV mapping")
+            else:
+                print(f"✓ UV mapping found")
             
-            self.vertex_count = len(vertices)
+            # Prepare data for GPU
+            vertices_flat = verts.flatten().tolist()
+            indices_flat = faces.flatten().tolist()
+            normals_flat = normals.flatten().tolist()
+            colors_flat = colors.flatten().tolist()
+            uvs_flat = uvs.flatten().tolist()
             
-            # Create vertex list
-            self.vertex_list = self.shader.vertex_list(
-                self.vertex_count,
+            # Upload to GPU
+            self.loading_stage = "Uploading to GPU..."
+            start_gpu = time.time()
+            
+            self.vertex_list = self.shader.vertex_list_indexed(
+                len(verts),
                 pyglet.gl.GL_TRIANGLES,
-                position=('f', vertices.flatten().tolist()),
-                normal=('f', normals.flatten().tolist()),
-                color=('f', colors.flatten().tolist()),
-                texcoord=('f', uvs.flatten().tolist())
+                indices_flat,
+                position=('f', vertices_flat),
+                normal=('f', normals_flat),
+                color=('f', colors_flat),
+                texcoord=('f', uvs_flat)
             )
+            
+            self.vertex_count = len(verts)
+            
+            print(f"Uploaded to GPU in {time.time() - start_gpu:.2f}s")
+            
+            total_time = time.time() - start_time
             
             self.loaded = True
             
             print(f"\n{'='*70}")
             print(f"✓ Model loaded successfully!")
             print(f"{'='*70}")
-            print(f"Vertices: {self.vertex_count:,}")
+            print(f"Total time: {total_time:.2f}s")
+            print(f"Unique vertices: {self.vertex_count:,}")
+            print(f"Faces: {self.face_count:,}")
             print(f"Texture: {'Yes' if self.has_texture else 'No'}")
+            print(f"Speed: {self.file_size_mb / total_time:.1f} MB/s")
             
             self.window.set_caption(f'OBJ Viewer - {Path(self.obj_path).name}')
             
@@ -487,8 +590,7 @@ class OBJViewer:
             print(f"  Right drag:      Pan camera")
             print(f"  Scroll:          Zoom in/out")
             print(f"  +/- (or =/_ ):   Increase/Decrease opacity")
-            print(f"  1:               10% opacity")
-            print(f"  5:               50% opacity")
+            print(f"  1-9:             Opacity 10-90%")
             print(f"  0:               100% opacity (fully opaque)")
             print(f"  R:               Reset view")
             print(f"  T:               Toggle texture")
