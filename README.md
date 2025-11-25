@@ -6,7 +6,9 @@ A project to enable the visualization of photogrammetry in environments such as 
 
 An html page for viewing .glb files with textures
 
-A standalone program featured in python for any devices
+A standalone program featured in python for any devices whit 2 version working in progress (OBJ/GLB)
+
+
 
 # Limitations and issues
 
@@ -24,6 +26,25 @@ Limitations of standalone file:
 
 ### Standalone programm
 
+#### GLB/GLTF viewer
+
+- Working whit python library 
+    - PyOpenGL 
+    - trimesh   
+    - numpy
+    - pyglet
+
+- Issues and bugs
+    - Can't start yet
+
+- Working in progress
+    - Builder for the final glb standalone
+    - Windows version
+    - windows GUI version (not started yet)
+
+
+
+#### OBJ viewer 
 - Working whit python library 
     - PyOpenGL 
     - trimesh   
@@ -41,7 +62,6 @@ Limitations of standalone file:
     - Builder for the final standalone
     - Windows version
     - Windows GUI version
-    
 
 ### HTML version 
 
