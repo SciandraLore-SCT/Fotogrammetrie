@@ -1,0 +1,22 @@
+# 3D Viewer Pro - Requirements
+# Install with: pip install -r requirements.txt
+
+# GUI Framework
+customtkinter>=5.2.0
+
+# 3D Rendering
+pyglet>=2.0.0
+
+# 3D Processing
+trimesh>=4.0.0
+numpy>=1.24.0
+
+# Image Processing
+Pillow>=10.0.0
+
+# Build Tools (optional - only for creating EXE)
+pyinstaller>=6.0.0
+
+# Optional: For better performance
+# scipy>=1.11.0  # Uncomment if needed
+# networkx>=3.0  # Uncomment if needed

@@ -668,10 +668,9 @@ if __name__ == '__main__':
     try:
         main()
     except KeyboardInterrupt:
-        print("\n\nInterrupted")
+        print("\n\nInterrupted")     
     except Exception as e:
         print(f"\n{'='*70}\nFATAL ERROR\n{'='*70}\n{e}\n")
         import traceback
         traceback.print_exc()
         input("\nPress Enter to exit...")
-        
