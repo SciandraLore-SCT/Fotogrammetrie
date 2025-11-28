@@ -1,8 +1,8 @@
 """
 Universal 3D Model Viewer
-Supports: GLB (fast!), OBJ, GLTF
-Multi-format textures: PNG, JPEG, WEBP, etc.
-Features: Adjustable opacity, Grid, Wireframe
+Supports: OBJ and GLB/GLTF formats
+Features: Adjustable opacity, Reference grid, External textures
+Optimized for large files (2GB+)
 """
 
 import sys
@@ -34,7 +34,7 @@ except ImportError:
 
 class UniversalViewer:
     def __init__(self, model_path, texture_path=None):
-        # Create OpenGL 3.3+ window
+        # Create window
         config = pyglet.gl.Config(
             major_version=3,
             minor_version=3,
@@ -65,7 +65,7 @@ class UniversalViewer:
         
         self.model_path = model_path
         self.texture_path = texture_path
-        self.model_type = Path(model_path).suffix.lower()
+        self.model_format = Path(model_path).suffix.lower()
         
         # Camera
         self.rot_x = 20.0
@@ -77,7 +77,6 @@ class UniversalViewer:
         # Model
         self.vertex_list = None
         self.vertex_count = 0
-        self.face_count = 0
         self.texture = None
         self.has_texture = False
         
@@ -85,7 +84,7 @@ class UniversalViewer:
         self.grid_vertex_list = None
         self.grid_shader = None
         
-        # UI backgrounds
+        # UI
         self.ui_shader = None
         self.ui_bg_top = None
         self.ui_bg_bottom = None
@@ -100,9 +99,9 @@ class UniversalViewer:
         
         # Stats
         self.file_size_mb = 0
-        self.load_time = 0
+        self.face_count = 0
         
-        # Shaders
+        # Shader
         self.shader = None
         
         # Events
@@ -133,7 +132,7 @@ class UniversalViewer:
         pyglet.gl.glClearColor(0.1, 0.12, 0.15, 1.0)
     
     def create_shaders(self):
-        """Create all shader programs"""
+        """Create shader programs"""
         # Main model shader
         vertex_source = """
         #version 330 core
@@ -259,18 +258,17 @@ class UniversalViewer:
         for i in range(-grid_size, grid_size + 1):
             z = i * grid_spacing
             vertices.extend([-grid_size * grid_spacing, 0, z, grid_size * grid_spacing, 0, z])
-            color = [0.5, 0.5, 0.5] if i == 0 else [0.3, 0.3, 0.3]
-            colors.extend(color * 2)
+            col = [0.5, 0.5, 0.5] if i == 0 else [0.3, 0.3, 0.3]
+            colors.extend(col * 2)
         
         for i in range(-grid_size, grid_size + 1):
             x = i * grid_spacing
             vertices.extend([x, 0, -grid_size * grid_spacing, x, 0, grid_size * grid_spacing])
-            color = [0.5, 0.5, 0.5] if i == 0 else [0.3, 0.3, 0.3]
-            colors.extend(color * 2)
+            col = [0.5, 0.5, 0.5] if i == 0 else [0.3, 0.3, 0.3]
+            colors.extend(col * 2)
         
-        vertex_count = len(vertices) // 3
         self.grid_vertex_list = self.grid_shader.vertex_list(
-            vertex_count,
+            len(vertices) // 3,
             pyglet.gl.GL_LINES,
             position=('f', vertices),
             color=('f', colors)
@@ -282,23 +280,26 @@ class UniversalViewer:
     
     def update_ui_backgrounds(self):
         """Update UI backgrounds for window size"""
-        top_v = [0, self.window.height-60, self.window.width, self.window.height-60,
-                 self.window.width, self.window.height, 0, self.window.height-60,
-                 self.window.width, self.window.height, 0, self.window.height]
+        top_verts = [
+            0, self.window.height - 60, self.window.width, self.window.height - 60,
+            self.window.width, self.window.height, 0, self.window.height - 60,
+            self.window.width, self.window.height, 0, self.window.height
+        ]
         
-        bot_v = [0, 0, self.window.width, 0, self.window.width, 55,
-                 0, 0, self.window.width, 55, 0, 55]
+        bottom_verts = [
+            0, 0, self.window.width, 0, self.window.width, 55,
+            0, 0, self.window.width, 55, 0, 55
+        ]
         
-        self.ui_bg_top = self.ui_shader.vertex_list(6, pyglet.gl.GL_TRIANGLES, position=('f', top_v))
-        self.ui_bg_bottom = self.ui_shader.vertex_list(6, pyglet.gl.GL_TRIANGLES, position=('f', bot_v))
+        self.ui_bg_top = self.ui_shader.vertex_list(6, pyglet.gl.GL_TRIANGLES, position=('f', top_verts))
+        self.ui_bg_bottom = self.ui_shader.vertex_list(6, pyglet.gl.GL_TRIANGLES, position=('f', bottom_verts))
     
     def load_texture(self, path):
-        """Load texture from file"""
+        """Load texture"""
         if not path or not os.path.exists(path):
             return False
-        
         try:
-            print(f"Loading texture: {Path(path).name}")
+            print(f"\nLoading texture: {Path(path).name}")
             img = image.load(path)
             self.texture = img.get_texture()
             self.has_texture = True
@@ -308,42 +309,66 @@ class UniversalViewer:
             print(f"✗ Texture failed: {e}")
             return False
     
+    def auto_find_texture(self):
+        """Auto-find texture"""
+        model_dir = Path(self.model_path).parent
+        model_name = Path(self.model_path).stem
+        formats = ['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tga']
+        
+        for pattern in [f"{model_name}.*", "texture.*", "diffuse.*"]:
+            for tex in model_dir.glob(pattern):
+                if tex.suffix.lower() in formats and tex != Path(self.model_path):
+                    if self.load_texture(str(tex)):
+                        return True
+        return False
+    
     def load_model(self, dt):
-        """Load 3D model (GLB/OBJ/GLTF)"""
+        """Load model (OBJ or GLB)"""
         try:
             self.file_size_mb = os.path.getsize(self.model_path) / (1024**2)
             
             print(f"\n{'='*70}")
-            print(f"Universal 3D Viewer - Loading")
+            print(f"Loading 3D Model ({self.model_format.upper()})")
             print(f"{'='*70}")
             print(f"File: {Path(self.model_path).name}")
-            print(f"Type: {self.model_type.upper()}")
             print(f"Size: {self.file_size_mb:.2f} MB")
             
-            # Load texture if provided
+            # Load texture
             if self.texture_path:
+                self.loading_stage = "Loading texture..."
                 self.load_texture(self.texture_path)
             else:
                 self.auto_find_texture()
             
             # Load model
-            self.loading_stage = f"Loading {self.model_type.upper()} file..."
-            print(f"\n{self.loading_stage}")
+            self.loading_stage = f"Loading {self.model_format.upper()} file..."
+            print(f"\nLoading {self.model_format.upper()} (optimized)...")
             
             start_time = time.time()
             
-            # Load with trimesh (handles GLB, OBJ, GLTF, etc.)
-            mesh = trimesh.load(
-                self.model_path,
-                force='mesh',
-                process=False,
-                validate=False
-            )
+            # GLB is MUCH faster than OBJ (binary format)
+            if self.model_format in ['.glb', '.gltf']:
+                print("Using fast GLB loader...")
+                mesh = trimesh.load(
+                    self.model_path,
+                    force='mesh',
+                    process=False
+                )
+            else:
+                # OBJ format
+                print("Using OBJ loader...")
+                mesh = trimesh.load(
+                    self.model_path,
+                    force='mesh',
+                    process=False,
+                    skip_materials=True,
+                    validate=False
+                )
             
             load_time = time.time() - start_time
-            print(f"✓ File loaded: {load_time:.2f}s")
+            print(f"✓ Loaded in {load_time:.2f}s")
             
-            # Handle scenes
+            # Handle scene
             if isinstance(mesh, trimesh.Scene):
                 print(f"Scene with {len(mesh.geometry)} objects, merging...")
                 mesh = trimesh.util.concatenate(list(mesh.geometry.values()))
@@ -353,26 +378,33 @@ class UniversalViewer:
             self.face_count = len(mesh.faces)
             
             # Process geometry
-            self.loading_stage = "Processing..."
             start_proc = time.time()
-            
             verts = mesh.vertices.astype(np.float32, copy=False)
-            faces = mesh.faces
             
-            # Center and normalize
+            # Center and scale
             center = verts.mean(axis=0)
             verts = verts - center
             max_extent = np.max(np.abs(verts))
             if max_extent > 0:
                 verts *= (2.0 / max_extent)
             
+            faces = mesh.faces
+            
             # Normals
             if hasattr(mesh, 'vertex_normals') and mesh.vertex_normals is not None:
                 normals = mesh.vertex_normals.astype(np.float32, copy=False)
             else:
                 print("Computing normals...")
-                mesh.fix_normals()
-                normals = mesh.vertex_normals.astype(np.float32, copy=False)
+                normals = np.zeros_like(verts)
+                for face in faces:
+                    v0, v1, v2 = verts[face[0]], verts[face[1]], verts[face[2]]
+                    fn = np.cross(v1 - v0, v2 - v0)
+                    normals[face[0]] += fn
+                    normals[face[1]] += fn
+                    normals[face[2]] += fn
+                norms = np.linalg.norm(normals, axis=1, keepdims=True)
+                norms[norms == 0] = 1
+                normals = normals / norms
             
             # Colors
             if hasattr(mesh.visual, 'vertex_colors') and mesh.visual.vertex_colors is not None:
@@ -383,15 +415,14 @@ class UniversalViewer:
             # UVs
             if hasattr(mesh.visual, 'uv') and mesh.visual.uv is not None:
                 uvs = mesh.visual.uv.astype(np.float32, copy=False)
-                print("✓ UV mapping found")
+                print("✓ UV mapping")
             else:
                 uvs = np.zeros((len(verts), 2), dtype=np.float32)
-                print("⚠ No UV coordinates")
+                print("⚠ No UVs")
             
-            print(f"✓ Processed: {time.time() - start_proc:.2f}s")
+            print(f"Processed in {time.time() - start_proc:.2f}s")
             
             # Upload to GPU
-            self.loading_stage = "Uploading to GPU..."
             start_gpu = time.time()
             
             self.vertex_list = self.shader.vertex_list_indexed(
@@ -405,65 +436,32 @@ class UniversalViewer:
             )
             
             self.vertex_count = len(verts)
-            print(f"✓ GPU upload: {time.time() - start_gpu:.2f}s")
+            print(f"GPU upload: {time.time() - start_gpu:.2f}s")
             
-            self.load_time = time.time() - start_time
+            total = time.time() - start_time
+            
             self.loaded = True
-            
             print(f"\n{'='*70}")
             print(f"✓ SUCCESS!")
             print(f"{'='*70}")
-            print(f"Total time: {self.load_time:.2f}s")
-            print(f"Speed: {self.file_size_mb / self.load_time:.1f} MB/s")
-            print(f"Vertices: {self.vertex_count:,}")
-            print(f"Faces: {self.face_count:,}")
-            print(f"Texture: {'Yes' if self.has_texture else 'No'}")
+            print(f"Total: {total:.2f}s | Speed: {self.file_size_mb/total:.1f} MB/s")
+            print(f"Vertices: {self.vertex_count:,} | Faces: {self.face_count:,}")
             
             self.window.set_caption(f'3D Viewer - {Path(self.model_path).name}')
             
-            self.print_controls()
+            print(f"\nControls:")
+            print(f"  Drag Left:   Rotate | Drag Right: Pan | Scroll: Zoom")
+            print(f"  +/-:         Opacity | 1-9: 10-90% | 0: 100%")
+            print(f"  R: Reset | T: Texture | W: Wire | G: Grid | F: Full | ESC: Exit")
             
         except Exception as e:
             self.error_msg = str(e)
-            print(f"\n{'='*70}")
-            print(f"✗ ERROR: {e}")
-            print(f"{'='*70}")
+            print(f"\n{'='*70}\n✗ ERROR: {e}\n{'='*70}")
             import traceback
             traceback.print_exc()
-            self.window.set_caption('Error loading model')
-    
-    def auto_find_texture(self):
-        """Try to find texture automatically"""
-        model_dir = Path(self.model_path).parent
-        model_name = Path(self.model_path).stem
-        patterns = [f"{model_name}.*", "texture.*", "diffuse.*", "*.png", "*.jpg", "*.jpeg"]
-        formats = ['.png', '.jpg', '.jpeg', '.webp', '.bmp']
-        
-        for pattern in patterns:
-            for tex_file in model_dir.glob(pattern):
-                if tex_file.suffix.lower() in formats and tex_file != Path(self.model_path):
-                    if self.load_texture(str(tex_file)):
-                        return True
-        return False
-    
-    def print_controls(self):
-        """Print control instructions"""
-        print(f"\nControls:")
-        print(f"  Left drag:    Rotate")
-        print(f"  Right drag:   Pan")
-        print(f"  Scroll:       Zoom")
-        print(f"  +/- (=/_ ):   Opacity")
-        print(f"  1-9:          Opacity presets")
-        print(f"  0:            100% opaque")
-        print(f"  R:            Reset view")
-        print(f"  T:            Toggle texture")
-        print(f"  W:            Wireframe")
-        print(f"  G:            Grid")
-        print(f"  F:            Fullscreen")
-        print(f"  ESC:          Exit")
     
     def draw(self):
-        """Main render loop"""
+        """Main render"""
         pyglet.gl.glClear(pyglet.gl.GL_COLOR_BUFFER_BIT | pyglet.gl.GL_DEPTH_BUFFER_BIT)
         
         if self.error_msg:
@@ -474,7 +472,6 @@ class UniversalViewer:
             self.draw_loading()
             return
         
-        # Matrices
         aspect = self.window.width / self.window.height
         projection = Mat4.perspective_projection(aspect, 45, 0.1, 100.0)
         view = Mat4()
@@ -483,17 +480,9 @@ class UniversalViewer:
         view = view.rotate(self.rot_y * 0.01745329, Vec3(0, 1, 0))
         model = Mat4()
         
-        # Grid
         if self.show_grid:
-            pyglet.gl.glDepthMask(pyglet.gl.GL_FALSE)
-            self.grid_shader.use()
-            self.grid_shader['projection'] = projection
-            self.grid_shader['view'] = view
-            self.grid_shader['model'] = model
-            self.grid_vertex_list.draw(pyglet.gl.GL_LINES)
-            pyglet.gl.glDepthMask(pyglet.gl.GL_TRUE)
+            self.draw_grid(projection, view, model)
         
-        # Model
         self.shader.use()
         self.shader['projection'] = projection
         self.shader['view'] = view
@@ -506,6 +495,9 @@ class UniversalViewer:
         if self.opacity < 1.0:
             pyglet.gl.glDisable(pyglet.gl.GL_CULL_FACE)
             pyglet.gl.glDepthMask(pyglet.gl.GL_FALSE)
+        else:
+            pyglet.gl.glEnable(pyglet.gl.GL_CULL_FACE)
+            pyglet.gl.glDepthMask(pyglet.gl.GL_TRUE)
         
         if self.has_texture and self.texture:
             pyglet.gl.glActiveTexture(pyglet.gl.GL_TEXTURE0)
@@ -523,37 +515,42 @@ class UniversalViewer:
         
         self.draw_ui()
     
+    def draw_grid(self, projection, view, model):
+        """Draw grid"""
+        pyglet.gl.glDepthMask(pyglet.gl.GL_FALSE)
+        self.grid_shader.use()
+        self.grid_shader['projection'] = projection
+        self.grid_shader['view'] = view
+        self.grid_shader['model'] = model
+        self.grid_vertex_list.draw(pyglet.gl.GL_LINES)
+        pyglet.gl.glDepthMask(pyglet.gl.GL_TRUE)
+    
     def draw_loading(self):
         """Loading screen"""
         pyglet.gl.glDisable(pyglet.gl.GL_DEPTH_TEST)
         
-        title = pyglet.text.Label('Loading 3D Model', font_name='Consolas', font_size=26,
-                                  x=self.window.width//2, y=self.window.height//2+80,
-                                  anchor_x='center', anchor_y='center', color=(255,255,255,255))
-        title.draw()
+        pyglet.text.Label('Loading 3D Model', font_name='Consolas', font_size=26,
+            x=self.window.width//2, y=self.window.height//2+80,
+            anchor_x='center', anchor_y='center', color=(255,255,255,255)).draw()
         
-        stage = pyglet.text.Label(self.loading_stage, font_name='Consolas', font_size=18,
-                                  x=self.window.width//2, y=self.window.height//2,
-                                  anchor_x='center', anchor_y='center', color=(220,220,220,255))
-        stage.draw()
+        pyglet.text.Label(self.loading_stage, font_name='Consolas', font_size=18,
+            x=self.window.width//2, y=self.window.height//2,
+            anchor_x='center', anchor_y='center', color=(220,220,220,255)).draw()
         
         if self.file_size_mb > 0:
-            info = pyglet.text.Label(f'{self.file_size_mb:.1f} MB - Please wait...',
-                                     font_name='Consolas', font_size=14,
-                                     x=self.window.width//2, y=self.window.height//2-80,
-                                     anchor_x='center', anchor_y='center', color=(180,180,180,255))
-            info.draw()
+            pyglet.text.Label(f'Size: {self.file_size_mb:.1f} MB', font_name='Consolas', font_size=14,
+                x=self.window.width//2, y=self.window.height//2-80,
+                anchor_x='center', anchor_y='center', color=(180,180,180,255)).draw()
         
         pyglet.gl.glEnable(pyglet.gl.GL_DEPTH_TEST)
     
     def draw_error(self):
         """Error screen"""
         pyglet.gl.glDisable(pyglet.gl.GL_DEPTH_TEST)
-        label = pyglet.text.Label(f'ERROR:\n\n{self.error_msg}', font_name='Consolas', font_size=18,
-                                  x=self.window.width//2, y=self.window.height//2,
-                                  anchor_x='center', anchor_y='center', multiline=True, width=900,
-                                  color=(255,150,150,255))
-        label.draw()
+        pyglet.text.Label(f'ERROR:\n\n{self.error_msg}', font_name='Consolas', font_size=18,
+            x=self.window.width//2, y=self.window.height//2,
+            anchor_x='center', anchor_y='center', multiline=True, width=900,
+            color=(255,150,150,255)).draw()
         pyglet.gl.glEnable(pyglet.gl.GL_DEPTH_TEST)
     
     def draw_ui(self):
@@ -561,7 +558,6 @@ class UniversalViewer:
         pyglet.gl.glDisable(pyglet.gl.GL_DEPTH_TEST)
         
         projection_2d = Mat4.orthogonal_projection(0, self.window.width, 0, self.window.height, -1, 1)
-        
         self.ui_shader.use()
         self.ui_shader['projection'] = projection_2d
         self.ui_shader['color'] = (0.0, 0.0, 0.0, 0.75)
@@ -569,21 +565,18 @@ class UniversalViewer:
         self.ui_bg_bottom.draw(pyglet.gl.GL_TRIANGLES)
         
         stats = (f'Vertices: {self.vertex_count:,} | Faces: {self.face_count:,} | '
-                f'Zoom: {self.distance:.1f}x | Opacity: {int(self.opacity*100)}% | '
-                f'Texture: {"ON" if self.has_texture else "OFF"} | '
-                f'Wire: {"ON" if self.show_wireframe else "OFF"} | Grid: {"ON" if self.show_grid else "OFF"}')
+                 f'Zoom: {self.distance:.1f}x | Opacity: {int(self.opacity*100)}% | '
+                 f'Texture: {"ON" if self.has_texture else "OFF"} | '
+                 f'Wire: {"ON" if self.show_wireframe else "OFF"} | Grid: {"ON" if self.show_grid else "OFF"}')
         
-        label_stats = pyglet.text.Label(stats, font_name='Consolas', font_size=14,
-                                        x=25, y=self.window.height-35, anchor_x='left', anchor_y='center',
-                                        color=(240,240,240,255))
-        label_stats.draw()
+        pyglet.text.Label(stats, font_name='Consolas', font_size=14,
+            x=25, y=self.window.height-35, anchor_x='left', anchor_y='center',
+            color=(240,240,240,255)).draw()
         
-        controls = ('LMB: Rotate | RMB: Pan | Scroll: Zoom | +/-: Opacity | 1-9: Presets | '
-                   '0: 100% | R: Reset | T: Tex | W: Wire | G: Grid')
-        label_controls = pyglet.text.Label(controls, font_name='Consolas', font_size=12,
-                                           x=25, y=27, anchor_x='left', anchor_y='center',
-                                           color=(220,220,220,255))
-        label_controls.draw()
+        controls = 'LMB: Rotate | RMB: Pan | Scroll: Zoom | +/-: Opacity | 1-9/0: Presets | R: Reset | T/W/G/F'
+        pyglet.text.Label(controls, font_name='Consolas', font_size=12,
+            x=25, y=27, anchor_x='left', anchor_y='center',
+            color=(220,220,220,255)).draw()
         
         pyglet.gl.glEnable(pyglet.gl.GL_DEPTH_TEST)
     
@@ -603,11 +596,9 @@ class UniversalViewer:
         if symbol == key.ESCAPE:
             self.window.close()
         elif symbol == key.R:
-            self.rot_x = 20.0
-            self.rot_y = 30.0
+            self.rot_x = self.rot_y = 20.0
             self.distance = 5.0
-            self.pan_x = 0.0
-            self.pan_y = 0.0
+            self.pan_x = self.pan_y = 0.0
         elif symbol == key.F:
             self.window.set_fullscreen(not self.window.fullscreen)
         elif symbol == key.T and self.texture:
@@ -620,16 +611,10 @@ class UniversalViewer:
             self.opacity = min(1.0, self.opacity + 0.1)
         elif symbol == key.MINUS or symbol == key.UNDERSCORE:
             self.opacity = max(0.1, self.opacity - 0.1)
-        elif symbol == key._1: self.opacity = 0.1
-        elif symbol == key._2: self.opacity = 0.2
-        elif symbol == key._3: self.opacity = 0.3
-        elif symbol == key._4: self.opacity = 0.4
-        elif symbol == key._5: self.opacity = 0.5
-        elif symbol == key._6: self.opacity = 0.6
-        elif symbol == key._7: self.opacity = 0.7
-        elif symbol == key._8: self.opacity = 0.8
-        elif symbol == key._9: self.opacity = 0.9
-        elif symbol == key._0: self.opacity = 1.0
+        elif symbol in [key._1, key._2, key._3, key._4, key._5, key._6, key._7, key._8, key._9]:
+            self.opacity = int(chr(symbol)) / 10.0
+        elif symbol == key._0:
+            self.opacity = 1.0
     
     def on_resize(self, width, height):
         pyglet.gl.glViewport(0, 0, width, height)
@@ -641,11 +626,8 @@ class UniversalViewer:
 
 def main():
     print("\n" + "="*70)
-    print("Universal 3D Model Viewer")
+    print("Universal 3D Viewer - OBJ & GLB Support")
     print("="*70)
-    print("Supports: GLB (fast!), OBJ, GLTF")
-    print("Textures: PNG, JPEG, WEBP, BMP, TGA")
-    print("="*70 + "\n")
     
     model_path = None
     texture_path = None
@@ -656,7 +638,7 @@ def main():
             texture_path = sys.argv[2]
     else:
         # Auto-find model
-        for ext in ['*.glb', '*.obj', '*.gltf']:
+        for ext in ['*.obj', '*.glb', '*.gltf']:
             files = list(Path('.').glob(ext))
             if files:
                 model_path = str(files[0])
@@ -664,16 +646,32 @@ def main():
                 break
         
         if not model_path:
-            print("ERROR: No 3D model found!")
-            print(f"\nUsage: python {sys.argv[0]} <model.glb|obj|gltf> [texture.png]")
+            print("ERROR: No model found!")
+            print(f"Usage: python {sys.argv[0]} <model.obj|glb> [texture.png]")
             input("\nPress Enter to exit...")
             return
     
     if not os.path.exists(model_path):
-        print(f"\nERROR: File not found: {model_path}")
+        print(f"ERROR: File not found: {model_path}")
         input("\nPress Enter to exit...")
         return
     
     if texture_path and not os.path.exists(texture_path):
-        print(f"\nWARNING: Texture not found: {texture_path}")
+        print(f"WARNING: Texture not found: {texture_path}")
         texture_path = None
+    
+    viewer = UniversalViewer(model_path, texture_path)
+    viewer.run()
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n\nInterrupted")
+    except Exception as e:
+        print(f"\n{'='*70}\nFATAL ERROR\n{'='*70}\n{e}\n")
+        import traceback
+        traceback.print_exc()
+        input("\nPress Enter to exit...")
+        
