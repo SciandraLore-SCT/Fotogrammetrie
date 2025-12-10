@@ -10,6 +10,16 @@ import os
 import time
 from pathlib import Path
 
+# FIX per Windows: forza UTF-8 per stdout/stderr
+if sys.platform == 'win32':
+    import codecs
+    if sys.stdout.encoding != 'utf-8':
+        sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer, 'strict')
+    if sys.stderr.encoding != 'utf-8':
+        sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer, 'strict')
+
+
+
 try:
     import pyglet
     from pyglet.window import key, mouse
@@ -33,6 +43,8 @@ except ImportError:
 
 
 class UniversalViewer:
+
+
     def __init__(self, model_path, texture_path=None):
         # Create window
         config = pyglet.gl.Config(
